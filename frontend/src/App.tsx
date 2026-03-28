@@ -1,121 +1,168 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useEffect } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Brain, Search, Clock, Settings, Zap } from 'lucide-react'
+import { SearchBar } from './components/SearchBar'
+import { ResultsGrid } from './components/ResultCard'
+import { FilterSidebar } from './components/FilterSidebar'
+import { TimelineView } from './components/TimelineView'
+import { DetailModal } from './components/DetailModal'
+import { SettingsPanel } from './components/Settings'
+import { useStore } from './store/useStore'
+import { captureApi } from './api/client'
 
-function App() {
-  const [count, setCount] = useState(0)
+type NavItem = { id: 'search' | 'timeline' | 'settings'; label: string; icon: React.ReactNode }
 
+const NAV: NavItem[] = [
+  { id: 'search',   label: 'Search',   icon: <Search size={16} /> },
+  { id: 'timeline', label: 'Timeline', icon: <Clock size={16} /> },
+  { id: 'settings', label: 'Settings', icon: <Settings size={16} /> },
+]
+
+function StatusDot() {
+  const { status, setStatus } = useStore()
+  useEffect(() => {
+    const refresh = () => captureApi.status().then(setStatus).catch(() => {})
+    refresh()
+    const id = setInterval(refresh, 10_000)
+    return () => clearInterval(id)
+  }, [setStatus])
+
+  const pending = status?.pending_queue ?? 0
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+    <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+      <span
+        className="h-2 w-2 rounded-full"
+        style={{ background: status?.daemon_running ? '#22c55e' : '#ef4444' }}
+      />
+      {status ? (
+        <>
+          <span>{status.indexed_captures.toLocaleString()} indexed</span>
+          {pending > 0 && <span style={{ color: 'var(--accent)' }}>· {pending} queued</span>}
+          <span>· {status.storage_mb} MB</span>
+        </>
+      ) : (
+        <span>Connecting…</span>
+      )}
+    </div>
   )
 }
 
-export default App
+export default function App() {
+  const { view, setView, filtersOpen } = useStore()
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === 'k') { e.preventDefault(); setView('search') }
+      if (e.ctrlKey && e.key === 't') { e.preventDefault(); setView('timeline') }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [setView])
+
+  return (
+    <div className="flex h-screen flex-col" style={{ background: 'var(--bg)' }}>
+      {/* Header */}
+      <header
+        className="flex items-center gap-4 border-b px-6 py-3 flex-shrink-0"
+        style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
+      >
+        {/* Logo */}
+        <div className="flex items-center gap-2 mr-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl" style={{ background: 'var(--accent)' }}>
+            <Brain size={18} color="#fff" />
+          </div>
+          <span className="font-bold tracking-tight" style={{ color: 'var(--text)' }}>Engram</span>
+        </div>
+
+        {/* Nav */}
+        <nav className="flex items-center gap-1">
+          {NAV.map(item => (
+            <button
+              key={item.id}
+              onClick={() => setView(item.id)}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+              style={{
+                background: view === item.id ? 'var(--surface-2)' : 'transparent',
+                color: view === item.id ? 'var(--text)' : 'var(--text-muted)',
+              }}
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="flex-1" />
+
+        {/* Manual capture button */}
+        <button
+          onClick={() => captureApi.manual().catch(() => {})}
+          title="Capture now (Ctrl+Shift+M)"
+          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors"
+          style={{ background: 'var(--surface-2)', color: 'var(--accent)' }}
+        >
+          <Zap size={12} />
+          Capture
+        </button>
+
+        {/* Status */}
+        <StatusDot />
+      </header>
+
+      {/* Main */}
+      <main className="flex-1 overflow-hidden">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={view}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.15 }}
+            className="h-full overflow-y-auto"
+          >
+            {view === 'search' && (
+              <div className="mx-auto max-w-6xl px-6 py-8">
+                <div className="mb-8">
+                  <SearchBar />
+                </div>
+                <div className="flex gap-6 items-start">
+                  <div className="flex-1 min-w-0">
+                    <ResultsGrid />
+                  </div>
+                  {filtersOpen && <FilterSidebar />}
+                </div>
+              </div>
+            )}
+
+            {view === 'timeline' && (
+              <div className="mx-auto max-w-4xl px-6 py-8">
+                <TimelineView />
+              </div>
+            )}
+
+            {view === 'settings' && (
+              <div className="mx-auto max-w-2xl px-6 py-8">
+                <h1 className="mb-6 text-2xl font-bold" style={{ color: 'var(--text)' }}>Settings</h1>
+                <SettingsPanel />
+              </div>
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </main>
+
+      {/* Detail modal */}
+      <DetailModal />
+
+      {/* Keyboard shortcut hint */}
+      <div
+        className="flex items-center justify-center gap-4 border-t px-6 py-2 text-xs"
+        style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}
+      >
+        <span><kbd className="rounded px-1" style={{ background: 'var(--surface-2)' }}>Ctrl+K</kbd> Search</span>
+        <span><kbd className="rounded px-1" style={{ background: 'var(--surface-2)' }}>Ctrl+T</kbd> Timeline</span>
+        <span><kbd className="rounded px-1" style={{ background: 'var(--surface-2)' }}>Esc</kbd> Close</span>
+      </div>
+    </div>
+  )
+}
