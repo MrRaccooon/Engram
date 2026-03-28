@@ -1,0 +1,85 @@
+capture:
+  # How often the screenshot collector fires (seconds)
+  screenshot_interval_seconds: 30
+  # How often the clipboard collector polls for changes (seconds)
+  clipboard_poll_seconds: 2
+  # Global hotkey to trigger an immediate manual capture
+  manual_hotkey: "ctrl+shift+m"
+  # Apps to never capture (process name, case-insensitive)
+  excluded_apps:
+    - "1password.exe"
+    - "keepass.exe"
+    - "bitwarden.exe"
+    - "kwallet.exe"
+  # Browser domains to exclude from history indexing (supports wildcards)
+  excluded_domains:
+    - "bankofamerica.com"
+    - "chase.com"
+    - "*.gov"
+    - "localhost"
+  # Suppress captures when an incognito/private browser window is active
+  suppress_incognito: true
+  # Directories to watch for document open/edit events
+  watched_directories:
+    - "~/Documents"
+    - "~/Desktop"
+    - "~/Downloads"
+  # File extensions to index from filesystem watcher
+  watched_extensions:
+    - ".txt"
+    - ".md"
+    - ".pdf"
+    - ".docx"
+    - ".py"
+    - ".js"
+    - ".ts"
+
+storage:
+  # Root path for all Engram data (thumbnails, raw files, DBs)
+  base_path: "~/.engram"
+  # Keep raw full-resolution screenshots after OCR and embedding
+  # Set false to save ~10x storage (thumbnails kept regardless)
+  keep_raw_screenshots: false
+  # Thumbnail max dimension in pixels (longest side)
+  thumbnail_size: 400
+  # Delete captures older than this many days (0 = keep forever)
+  retention_days: 90
+  # Auto-cleanup when storage exceeds this limit (GB). 0 = disabled.
+  max_storage_gb: 10
+
+embedding:
+  # sentence-transformers model for text embedding
+  text_model: "all-MiniLM-L6-v2"
+  # CLIP model for visual embedding (open-clip-torch)
+  visual_model: "ViT-B-32"
+  visual_pretrained: "openai"
+  # Cross-encoder model for reranking retrieved results
+  reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  # Number of items to embed in a single batch
+  batch_size: 16
+  # How often the cold-path worker processes the job queue (minutes)
+  worker_interval_minutes: 2
+  # Top-K candidates retrieved from vector DB before reranking
+  retrieval_top_k: 50
+  # Final top-N results returned to the frontend after reranking
+  result_top_n: 10
+
+chunking:
+  # Maximum tokens per chunk fed to the text embedder
+  chunk_size: 512
+  # Token overlap between consecutive chunks
+  chunk_overlap: 64
+
+api:
+  host: "127.0.0.1"
+  port: 8765
+  # How many seconds to cache /status responses
+  status_cache_seconds: 5
+
+privacy:
+  # Encrypt the ChromaDB and SQLite data at rest using Fernet/AES-256
+  encrypt_at_rest: false
+  # Require a local PIN before the dashboard loads
+  require_local_auth: false
+  # Log every search query and data access event to audit.log
+  audit_logging: true
