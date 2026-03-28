@@ -112,11 +112,46 @@ No API keys. No accounts. No telemetry.
 ```bash
 git clone https://github.com/MrRaccooon/Engram
 cd Engram
+
+# Backend
 pip install -r requirements.txt
-python daemon/scheduler.py
+python main.py          # starts daemon + API + system tray
+
+# Frontend (separate terminal)
+cd frontend
+npm install
+npm run dev             # opens at http://localhost:5173
 ```
 
-Open [http://localhost:8765](http://localhost:8765) and start remembering.
+Open [http://localhost:5173](http://localhost:5173) and start remembering.
+
+> **Windows startup:** Run `python scripts/install_windows.py` once to register Engram
+> as a Task Scheduler job that starts automatically on login.
+
+---
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+K` | Jump to search |
+| `Ctrl+T` | Open timeline |
+| `Ctrl+Shift+M` | Capture right now (global hotkey) |
+| `Esc` | Close detail modal |
+
+---
+
+## Troubleshooting
+
+**OCR is slow on first run** — EasyOCR downloads its model (~100MB) on first use. Subsequent runs are instant.
+
+**Chrome history not found** — Close Chrome before starting Engram (Chrome locks its History DB while open).
+
+**Clipboard not capturing** — Requires `pywin32`. Run `pip install pywin32` and then `python -m pywin32_postinstall -install`.
+
+**System tray not appearing** — Run `pip install pystray pillow` and restart.
+
+**Search returns no results** — The cold-path worker runs every 2 minutes. Wait for the queue to drain (visible in Settings → Status).
 
 ---
 
