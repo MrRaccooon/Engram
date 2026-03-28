@@ -1,11 +1,11 @@
 # Engram
 
 > In neuroscience, an engram is the physical trace a memory
-> leaves in your brain — the cellular change that *is* the memory.
+> leaves in your brain. The cellular change that *is* the memory.
 > Every experience rewires something. Nothing is truly forgotten.
 >
 > Your computer has been living a rich life.
-> You've been forgetting all of it.
+> You have been forgetting all of it.
 >
 > Engram remembers.
 
@@ -23,8 +23,8 @@ Your computer has never had one.
 Until now.
 
 **Engram** is a passive, local-first lifelogging engine that captures
-your digital life — screenshots, clipboard, browser history, documents,
-audio — embeds it semantically, and lets you search it by meaning.
+your digital life (screenshots, clipboard, browser history, documents, audio),
+embeds it semantically, and lets you search it by meaning.
 
 Not by filename. Not by date. By *what it was about.*
 
@@ -34,15 +34,15 @@ Not by filename. Not by date. By *what it was about.*
 
 ```
 Your screen, your words, your audio
-         ↓
+         |
     Captured silently in the background
-         ↓
+         |
     OCR'd and understood by EasyOCR
-         ↓
-    Embedded as meaning — not text — via sentence-transformers + CLIP
-         ↓
+         |
+    Embedded as meaning (not text) via sentence-transformers + CLIP
+         |
     Stored in a local vector database (ChromaDB)
-         ↓
+         |
     Retrieved by what you remember about it,
     not what it was called
 ```
@@ -58,7 +58,7 @@ Your screen, your words, your audio
 | Neocortex stores permanent memories | ChromaDB vector store |
 | Recall via association | Semantic similarity search |
 | Amygdala flags emotional importance | Relevance score + recency weighting |
-| Context reconstruction from fragments | Temporal context window ±5 minutes |
+| Context reconstruction from fragments | Temporal context window of plus or minus 5 minutes |
 | Different regions for different memory types | Dual embeddings: text (MiniLM) + visual (CLIP) |
 
 The brain never stores files.
@@ -70,29 +70,29 @@ So does Engram.
 ## Architecture
 
 ```
-HOT PATH  (real-time, < 50ms)
-  Collectors → perceptual hash dedupe → thumbnail → SQLite job_queue
+HOT PATH  (real-time, under 50ms)
+  Collectors -> perceptual hash dedupe -> thumbnail -> SQLite job_queue
 
 COLD PATH  (async, every 2 minutes)
-  Worker → EasyOCR → chunk → embed (text + CLIP) → ChromaDB
+  Worker -> EasyOCR -> chunk -> embed (text + CLIP) -> ChromaDB
 
 QUERY PATH  (user triggered)
-  Search query → dual vector search → cross-encoder rerank → results
+  Search query -> dual vector search -> cross-encoder rerank -> results
 
 FRONTEND
-  React 18 + TypeScript → FastAPI (localhost:8765) → ChromaDB
+  React 18 + TypeScript -> FastAPI (localhost:8765) -> ChromaDB
 ```
 
 ---
 
 ## Data Sources
 
-- **Screenshots** — every 30 seconds, perceptual-hash deduplicated
-- **Clipboard** — on every copy event, change-detected
-- **Browser History** — Chrome and Firefox SQLite databases
-- **Active Window** — title and application name per capture
-- **File System** — document opens and edits via filesystem watcher
-- **Audio** — ambient recording → Whisper transcription (optional)
+- **Screenshots** captured every 30 seconds, perceptual-hash deduplicated
+- **Clipboard** captured on every copy event, change-detected
+- **Browser History** read from Chrome and Firefox SQLite databases
+- **Active Window** title and application name attached to every capture
+- **File System** document opens and edits monitored via filesystem watcher
+- **Audio** ambient recording with optional Whisper transcription
 
 ---
 
@@ -100,8 +100,7 @@ FRONTEND
 
 100% local. Zero cloud. Nothing leaves your machine. Ever.
 
-This is the privacy-first, open-source alternative to Microsoft Recall —
-built in the open, owned by you, running entirely on your hardware.
+This is the privacy-first open-source alternative to Microsoft Recall, built in the open, owned by you, running entirely on your hardware.
 
 No API keys. No accounts. No telemetry.
 
@@ -115,18 +114,17 @@ cd Engram
 
 # Backend
 pip install -r requirements.txt
-python main.py          # starts daemon + API + system tray
+python main.py
 
 # Frontend (separate terminal)
 cd frontend
 npm install
-npm run dev             # opens at http://localhost:5173
+npm run dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173) and start remembering.
 
-> **Windows startup:** Run `python scripts/install_windows.py` once to register Engram
-> as a Task Scheduler job that starts automatically on login.
+Run `python scripts/install_windows.py` once to register Engram as a Task Scheduler job that starts automatically on login.
 
 ---
 
@@ -143,15 +141,15 @@ Open [http://localhost:5173](http://localhost:5173) and start remembering.
 
 ## Troubleshooting
 
-**OCR is slow on first run** — EasyOCR downloads its model (~100MB) on first use. Subsequent runs are instant.
+**OCR is slow on first run.** EasyOCR downloads its model (around 100MB) on first use. Subsequent runs are instant.
 
-**Chrome history not found** — Close Chrome before starting Engram (Chrome locks its History DB while open).
+**Chrome history not found.** Close Chrome before starting Engram. Chrome locks its History database while it is open.
 
-**Clipboard not capturing** — Requires `pywin32`. Run `pip install pywin32` and then `python -m pywin32_postinstall -install`.
+**Clipboard not capturing.** Requires pywin32. Run `pip install pywin32` and then `python -m pywin32_postinstall -install`.
 
-**System tray not appearing** — Run `pip install pystray pillow` and restart.
+**System tray not appearing.** Run `pip install pystray pillow` and restart.
 
-**Search returns no results** — The cold-path worker runs every 2 minutes. Wait for the queue to drain (visible in Settings → Status).
+**Search returns no results.** The cold-path worker runs every 2 minutes. Wait for the queue to drain. You can check the current queue depth in Settings under Status.
 
 ---
 
@@ -175,4 +173,5 @@ Open [http://localhost:5173](http://localhost:5173) and start remembering.
 
 *"The existence of forgetting has never been proved.
 We only know that some things don't come to mind when we want them."*
-— Friedrich Nietzsche
+
+Friedrich Nietzsche
