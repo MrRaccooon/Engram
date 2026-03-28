@@ -39,7 +39,8 @@ frontend/.env
 Thumbs.db
 desktop.ini
 
-# Secrets
-*.env
+# Secrets — never commit real credentials
+.env
 .env.*
+!.env.example
 config/local.yaml
