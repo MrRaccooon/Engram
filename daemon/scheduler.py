@@ -87,6 +87,16 @@ def _job_embedding_worker() -> None:
     process_batch()
 
 
+def _job_consolidation() -> None:
+    from pipeline.consolidation_worker import run_consolidation
+    run_consolidation(days_back=1)
+
+
+def _job_daily_digest() -> None:
+    from daemon.tray import show_digest
+    show_digest()
+
+
 # ── public API ────────────────────────────────────────────────────────────────
 _scheduler: BackgroundScheduler | None = None
 
@@ -141,6 +151,31 @@ def start() -> None:
         trigger="interval",
         minutes=worker_interval_min,
         id="embedding_worker",
+        max_instances=1,
+        coalesce=True,
+    )
+
+    # Nightly consolidation (Phase 2)
+    cons_cfg = cfg.get("consolidation", {})
+    cons_hour = cons_cfg.get("run_hour", 2)
+    cons_minute = cons_cfg.get("run_minute", 0)
+    _scheduler.add_job(
+        _job_consolidation,
+        trigger="cron",
+        hour=cons_hour,
+        minute=cons_minute,
+        id="consolidation",
+        max_instances=1,
+        coalesce=True,
+    )
+
+    # Daily digest notification (Phase 5)
+    _scheduler.add_job(
+        _job_daily_digest,
+        trigger="cron",
+        hour=8,
+        minute=0,
+        id="daily_digest",
         max_instances=1,
         coalesce=True,
     )

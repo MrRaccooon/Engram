@@ -6,7 +6,9 @@ Called by the APScheduler every N minutes. Drains the pending job_queue:
   2. Chunk → split long text into overlapping 512-token windows
   3. Embed → text vectors (sentence-transformers) + visual vectors (CLIP)
   4. Upsert → write vectors + metadata into ChromaDB
-  5. Status → mark capture as 'indexed' or 'error' in SQLite
+  5. NER tags → extract entities and write to capture_tags (Phase 3)
+  6. Graph edges → find nearest neighbors and write to capture_edges (Phase 3)
+  7. Status → mark capture as 'indexed' or 'error' in SQLite
 
 Designed to be safe to call concurrently (APScheduler max_instances=1
 prevents overlap, but the function itself is also idempotent).
@@ -114,3 +116,28 @@ def _process_capture(row) -> None:
                 window_title=window_title,
                 app_name=app_name,
             )
+
+    # ── 4. NER tagging (Phase 3) ──────────────────────────────────────────────
+    if text.strip():
+        try:
+            from pipeline.entity_masker import extract_tags
+            from storage.graph_db import upsert_tags
+            tags = extract_tags(text)
+            if tags:
+                upsert_tags(capture_id, tags)
+                logger.debug(f"Worker: {capture_id[:8]} → {len(tags)} tag(s)")
+        except Exception as exc:
+            logger.debug(f"NER tagging skipped for {capture_id[:8]}: {exc}")
+
+    # ── 5. Semantic graph edges (Phase 3) ────────────────────────────────────
+    # Use the first text chunk's vector to find related captures
+    if text.strip():
+        try:
+            from storage.graph_db import build_edges_for_capture
+            first_vec = embedder.embed_text(text[:512])
+            if first_vec:
+                n_edges = build_edges_for_capture(capture_id, first_vec, top_k=5)
+                if n_edges:
+                    logger.debug(f"Worker: {capture_id[:8]} → {n_edges} graph edge(s)")
+        except Exception as exc:
+            logger.debug(f"Graph edge building skipped for {capture_id[:8]}: {exc}")

@@ -1,20 +1,27 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Brain, Search, Clock, Settings, Zap } from 'lucide-react'
+import { Brain, Search, Clock, Settings, Zap, Bot, BarChart2, Lightbulb } from 'lucide-react'
 import { SearchBar } from './components/SearchBar'
 import { ResultsGrid } from './components/ResultCard'
 import { FilterSidebar } from './components/FilterSidebar'
 import { TimelineView } from './components/TimelineView'
 import { DetailModal } from './components/DetailModal'
 import { SettingsPanel } from './components/Settings'
+import { ChatView } from './components/ChatView'
+import { ActivityDashboard } from './components/ActivityDashboard'
+import { InsightsView } from './components/InsightsView'
+import { LockScreen } from './components/LockScreen'
 import { useStore } from './store/useStore'
-import { captureApi } from './api/client'
+import { api, captureApi, authApi } from './api/client'
 
-type NavItem = { id: 'search' | 'timeline' | 'settings'; label: string; icon: React.ReactNode }
+type NavItem = { id: 'search' | 'timeline' | 'chat' | 'activity' | 'insights' | 'settings'; label: string; icon: React.ReactNode }
 
 const NAV: NavItem[] = [
   { id: 'search',   label: 'Search',   icon: <Search size={16} /> },
+  { id: 'chat',     label: 'Ask',      icon: <Bot size={16} /> },
   { id: 'timeline', label: 'Timeline', icon: <Clock size={16} /> },
+  { id: 'activity', label: 'Activity', icon: <BarChart2 size={16} /> },
+  { id: 'insights', label: 'Insights', icon: <Lightbulb size={16} /> },
   { id: 'settings', label: 'Settings', icon: <Settings size={16} /> },
 ]
 
@@ -49,16 +56,50 @@ function StatusDot() {
 
 export default function App() {
   const { view, setView, filtersOpen } = useStore()
+  const [locked, setLocked] = useState(false)
+  const [authChecked, setAuthChecked] = useState(false)
+  const [sessionToken, setSessionToken] = useState<string | null>(null)
+
+  // Check auth status on mount
+  useEffect(() => {
+    authApi.status()
+      .then(s => {
+        if (s.auth_enabled && s.locked) setLocked(true)
+      })
+      .catch(() => {})
+      .finally(() => setAuthChecked(true))
+  }, [])
+
+  // Attach session token to all API calls when available
+  useEffect(() => {
+    if (sessionToken) {
+      api.defaults.headers.common['X-Engram-Session'] = sessionToken
+    }
+  }, [sessionToken])
 
   // Global keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === 'k') { e.preventDefault(); setView('search') }
       if (e.ctrlKey && e.key === 't') { e.preventDefault(); setView('timeline') }
+      if (e.ctrlKey && e.key === 'j') { e.preventDefault(); setView('chat') }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [setView])
+
+  if (!authChecked) return null
+
+  if (locked) {
+    return (
+      <LockScreen
+        onUnlocked={token => {
+          setSessionToken(token)
+          setLocked(false)
+        }}
+      />
+    )
+  }
 
   return (
     <div className="flex h-screen flex-col" style={{ background: 'var(--bg)' }}>
@@ -135,9 +176,23 @@ export default function App() {
               </div>
             )}
 
+            {view === 'chat' && <ChatView />}
+
             {view === 'timeline' && (
               <div className="mx-auto max-w-4xl px-6 py-8">
                 <TimelineView />
+              </div>
+            )}
+
+            {view === 'activity' && (
+              <div className="mx-auto max-w-4xl px-6 py-8">
+                <ActivityDashboard />
+              </div>
+            )}
+
+            {view === 'insights' && (
+              <div className="mx-auto max-w-3xl px-6 py-8">
+                <InsightsView />
               </div>
             )}
 
@@ -160,6 +215,7 @@ export default function App() {
         style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}
       >
         <span><kbd className="rounded px-1" style={{ background: 'var(--surface-2)' }}>Ctrl+K</kbd> Search</span>
+        <span><kbd className="rounded px-1" style={{ background: 'var(--surface-2)' }}>Ctrl+J</kbd> Ask</span>
         <span><kbd className="rounded px-1" style={{ background: 'var(--surface-2)' }}>Ctrl+T</kbd> Timeline</span>
         <span><kbd className="rounded px-1" style={{ background: 'var(--surface-2)' }}>Esc</kbd> Close</span>
       </div>

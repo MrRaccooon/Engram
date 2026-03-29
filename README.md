@@ -174,4 +174,4 @@ Run `python scripts/install_windows.py` once to register Engram as a Task Schedu
 *"The existence of forgetting has never been proved.
 We only know that some things don't come to mind when we want them."*
 
-Friedrich Nietzsche
+-Friedrich Nietzsche

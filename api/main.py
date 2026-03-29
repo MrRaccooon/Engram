@@ -17,7 +17,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from api.routes import capture, config, search
+from api.routes import capture, config, search, ask, activity, insights
+from api.middleware import auth as auth_middleware
 
 _CONFIG_PATH = Path(__file__).parent.parent / "config" / "config.yaml"
 
@@ -65,9 +66,13 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    app.include_router(search.router,  prefix="/api")
-    app.include_router(capture.router, prefix="/api")
-    app.include_router(config.router,  prefix="/api")
+    app.include_router(search.router,    prefix="/api")
+    app.include_router(capture.router,   prefix="/api")
+    app.include_router(config.router,    prefix="/api")
+    app.include_router(ask.router,                  prefix="/api")
+    app.include_router(activity.router,             prefix="/api")
+    app.include_router(insights.router,             prefix="/api")
+    app.include_router(auth_middleware.router,      prefix="/api")
 
     @app.get("/api/health")
     async def health():

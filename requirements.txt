@@ -51,5 +51,15 @@ pypdf>=4.2.0
 # ── Cryptography (optional at-rest encryption) ────────────────────────────────
 cryptography>=42.0.0
 
+# ── NLP / NER (privacy pipeline + tagging) ───────────────────────────────────
+spacy>=3.7.0
+
+# ── Frontier API clients (intelligence pipeline) ─────────────────────────────
+anthropic>=0.25.0
+openai>=1.30.0
+
+# ── MCP server ───────────────────────────────────────────────────────────────
+mcp>=1.0.0
+
 # ── Original keylog.py deps (preserved) ──────────────────────────────────────
 pyaudio>=0.2.14

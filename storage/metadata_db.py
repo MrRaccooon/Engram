@@ -75,6 +75,41 @@ CREATE TABLE IF NOT EXISTS job_queue (
 );
 
 CREATE INDEX IF NOT EXISTS idx_job_queue_capture_id ON job_queue(capture_id);
+
+-- Phase 2: Nightly consolidation insights
+CREATE TABLE IF NOT EXISTS insights (
+    id               TEXT PRIMARY KEY,
+    date             TEXT NOT NULL,
+    session_start    TEXT NOT NULL,
+    session_end      TEXT NOT NULL,
+    summary          TEXT NOT NULL,
+    topics           TEXT,
+    consolidated_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_insights_date ON insights(date);
+
+-- Phase 3: Semantic knowledge graph
+CREATE TABLE IF NOT EXISTS capture_edges (
+    source_id   TEXT NOT NULL,
+    target_id   TEXT NOT NULL,
+    similarity  REAL NOT NULL,
+    edge_type   TEXT NOT NULL,
+    PRIMARY KEY (source_id, target_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_edges_source ON capture_edges(source_id);
+CREATE INDEX IF NOT EXISTS idx_edges_target ON capture_edges(target_id);
+
+CREATE TABLE IF NOT EXISTS capture_tags (
+    capture_id  TEXT NOT NULL,
+    tag         TEXT NOT NULL,
+    tag_type    TEXT NOT NULL,
+    PRIMARY KEY (capture_id, tag)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tags_capture ON capture_tags(capture_id);
+CREATE INDEX IF NOT EXISTS idx_tags_tag     ON capture_tags(tag);
 """
 
 
@@ -215,3 +250,115 @@ def delete_captures_before(cutoff_iso: str) -> int:
         ).fetchone()[0]
         conn.execute("DELETE FROM captures WHERE timestamp < ?", (cutoff_iso,))
     return count
+
+
+# ── Insights (Phase 2) ────────────────────────────────────────────────────────
+
+def insert_insight(
+    *,
+    insight_id: str,
+    date: str,
+    session_start: str,
+    session_end: str,
+    summary: str,
+    topics: Optional[str] = None,
+) -> None:
+    """Insert a consolidated insight summary."""
+    consolidated_at = datetime.utcnow().isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO insights
+                (id, date, session_start, session_end, summary, topics, consolidated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (insight_id, date, session_start, session_end, summary, topics, consolidated_at),
+        )
+
+
+def fetch_insights_for_day(date_str: str) -> list[sqlite3.Row]:
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT * FROM insights WHERE date = ? ORDER BY session_start ASC",
+            (date_str,),
+        ).fetchall()
+
+
+def fetch_recent_insights(days: int = 7) -> list[sqlite3.Row]:
+    from datetime import timedelta
+    cutoff = (datetime.utcnow() - timedelta(days=days)).date().isoformat()
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT * FROM insights WHERE date >= ? ORDER BY date DESC, session_start ASC",
+            (cutoff,),
+        ).fetchall()
+
+
+def fetch_latest_insight() -> Optional[sqlite3.Row]:
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT * FROM insights ORDER BY consolidated_at DESC LIMIT 1"
+        ).fetchone()
+
+
+def has_insight_for_day(date_str: str) -> bool:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM insights WHERE date = ? LIMIT 1", (date_str,)
+        ).fetchone()
+    return row is not None
+
+
+# ── Graph / Tags (Phase 3) ────────────────────────────────────────────────────
+
+def upsert_edge(source_id: str, target_id: str, similarity: float, edge_type: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO capture_edges (source_id, target_id, similarity, edge_type)
+            VALUES (?, ?, ?, ?)
+            """,
+            (source_id, target_id, round(similarity, 4), edge_type),
+        )
+
+
+def fetch_related_captures(capture_id: str, limit: int = 5) -> list[sqlite3.Row]:
+    """Return captures related to the given capture_id via the graph."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT c.*, e.similarity, e.edge_type
+            FROM capture_edges e
+            JOIN captures c ON c.id = e.target_id
+            WHERE e.source_id = ?
+            ORDER BY e.similarity DESC
+            LIMIT ?
+            """,
+            (capture_id, limit),
+        ).fetchall()
+    return rows
+
+
+def upsert_tags(capture_id: str, tags: list[tuple[str, str]]) -> None:
+    """Insert (tag, tag_type) pairs for a capture, ignoring duplicates."""
+    if not tags:
+        return
+    with _connect() as conn:
+        conn.executemany(
+            "INSERT OR IGNORE INTO capture_tags (capture_id, tag, tag_type) VALUES (?, ?, ?)",
+            [(capture_id, tag, tag_type) for tag, tag_type in tags],
+        )
+
+
+def fetch_captures_by_tag(tag: str, limit: int = 20) -> list[sqlite3.Row]:
+    with _connect() as conn:
+        return conn.execute(
+            """
+            SELECT c.* FROM captures c
+            JOIN capture_tags t ON t.capture_id = c.id
+            WHERE t.tag = ?
+            ORDER BY c.timestamp DESC
+            LIMIT ?
+            """,
+            (tag, limit),
+        ).fetchall()

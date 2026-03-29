@@ -111,6 +111,10 @@ if __name__ == "__main__":
     # Hotkey listener
     _start_hotkey_listener(cfg)
 
+    # MCP server (optional, localhost only)
+    from mcp_server import start_mcp_server_thread
+    start_mcp_server_thread()
+
     # System tray (blocks main thread)
     logger.info("Engram fully started — opening system tray")
     from daemon import tray

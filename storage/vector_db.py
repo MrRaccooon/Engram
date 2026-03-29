@@ -21,14 +21,16 @@ from loguru import logger
 _client: Optional[chromadb.ClientAPI] = None
 _text_col: Optional[chromadb.Collection] = None
 _visual_col: Optional[chromadb.Collection] = None
+_insights_col: Optional[chromadb.Collection] = None
 
 TEXT_COLLECTION = "text_embeddings"
 VISUAL_COLLECTION = "visual_embeddings"
+INSIGHTS_COLLECTION = "insights_embeddings"
 
 
 def init(db_path: Path) -> None:
     """Initialise persistent ChromaDB client and create collections. Call once at startup."""
-    global _client, _text_col, _visual_col
+    global _client, _text_col, _visual_col, _insights_col
 
     db_path.mkdir(parents=True, exist_ok=True)
 
@@ -47,9 +49,15 @@ def init(db_path: Path) -> None:
         metadata={"hnsw:space": "cosine"},
     )
 
+    _insights_col = _client.get_or_create_collection(
+        name=INSIGHTS_COLLECTION,
+        metadata={"hnsw:space": "cosine"},
+    )
+
     logger.info(
         f"ChromaDB ready at {db_path} | "
-        f"text={_text_col.count()} visual={_visual_col.count()}"
+        f"text={_text_col.count()} visual={_visual_col.count()} "
+        f"insights={_insights_col.count()}"
     )
 
 
@@ -185,9 +193,90 @@ def count_visual() -> int:
     return _visual_col.count()
 
 
+def count_insights() -> int:
+    _ensure_init()
+    assert _insights_col is not None
+    return _insights_col.count()
+
+
 def delete_by_capture_ids(capture_ids: list[str]) -> None:
     """Remove all vectors associated with a list of capture IDs."""
     _ensure_init()
     assert _text_col is not None and _visual_col is not None
     for col in (_text_col, _visual_col):
         col.delete(where={"capture_id": {"$in": capture_ids}})
+
+
+# ── Insights (Phase 2) ────────────────────────────────────────────────────────
+
+def upsert_insight(
+    *,
+    doc_id: str,
+    embedding: list[float],
+    insight_id: str,
+    date: str,
+    summary_preview: str,
+    topics: str = "",
+) -> None:
+    """Upsert a consolidated insight embedding."""
+    _ensure_init()
+    assert _insights_col is not None
+    _insights_col.upsert(
+        ids=[doc_id],
+        embeddings=[embedding],
+        metadatas=[{
+            "insight_id": insight_id,
+            "date": date,
+            "summary_preview": summary_preview[:300],
+            "topics": topics,
+            "source_type": "insight",
+        }],
+    )
+
+
+def query_insights(
+    embedding: list[float],
+    top_k: int = 5,
+    where: Optional[dict[str, Any]] = None,
+) -> list[dict[str, Any]]:
+    """Query the insights collection by embedding similarity."""
+    _ensure_init()
+    assert _insights_col is not None
+    count = _insights_col.count()
+    if count == 0:
+        return []
+    kwargs: dict[str, Any] = {
+        "query_embeddings": [embedding],
+        "n_results": min(top_k, count),
+        "include": ["metadatas", "distances"],
+    }
+    if where:
+        kwargs["where"] = where
+    results = _insights_col.query(**kwargs)
+    return _flatten(results)
+
+
+def get_nearest_text_neighbors(
+    embedding: list[float],
+    top_k: int = 6,
+    exclude_id: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """
+    Return the top-k nearest text vectors.
+    Used by the graph builder to find related captures.
+    """
+    _ensure_init()
+    assert _text_col is not None
+    count = _text_col.count()
+    if count < 2:
+        return []
+    n = min(top_k + 1, count)  # +1 because the source itself may appear
+    results = _text_col.query(
+        query_embeddings=[embedding],
+        n_results=n,
+        include=["metadatas", "distances"],
+    )
+    flat = _flatten(results)
+    if exclude_id:
+        flat = [r for r in flat if r.get("capture_id") != exclude_id]
+    return flat[:top_k]

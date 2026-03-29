@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Clock, Monitor, Clipboard, Globe, FileText, Mic, ExternalLink } from 'lucide-react'
-import { captureApi, type ContextResponse } from '../api/client'
+import { X, Clock, Monitor, Clipboard, Globe, FileText, Mic, ExternalLink, Link2 } from 'lucide-react'
+import { captureApi, relatedApi, type ContextResponse, type RelatedCapture } from '../api/client'
 import { useStore } from '../store/useStore'
 
 const SOURCE_ICONS: Record<string, React.ReactNode> = {
@@ -29,14 +29,20 @@ export function DetailModal() {
   const { selectedResult, setSelectedResult } = useStore()
   const [context, setContext] = useState<ContextResponse | null>(null)
   const [loadingCtx, setLoadingCtx] = useState(false)
+  const [related, setRelated] = useState<RelatedCapture[]>([])
+  const [sidebarTab, setSidebarTab] = useState<'context' | 'related'>('context')
 
   useEffect(() => {
-    if (!selectedResult) { setContext(null); return }
+    if (!selectedResult) { setContext(null); setRelated([]); return }
     setLoadingCtx(true)
     captureApi.context(selectedResult.capture_id, 5)
       .then(setContext)
       .catch(() => setContext(null))
       .finally(() => setLoadingCtx(false))
+
+    relatedApi.get(selectedResult.capture_id, 5)
+      .then(d => setRelated(d.related))
+      .catch(() => setRelated([]))
   }, [selectedResult])
 
   // Close on Escape
@@ -133,46 +139,102 @@ export function DetailModal() {
                 )}
               </div>
 
-              {/* Context sidebar */}
+              {/* Context / Related sidebar */}
               <div
-                className="w-64 flex-shrink-0 overflow-y-auto border-l p-4"
+                className="w-64 flex-shrink-0 overflow-y-auto border-l flex flex-col"
                 style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}
               >
-                <div className="flex items-center gap-2 mb-3">
-                  <Clock size={14} style={{ color: 'var(--text-muted)' }} />
-                  <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
-                    Context ±5 min
-                  </p>
+                {/* Tab switcher */}
+                <div className="flex border-b" style={{ borderColor: 'var(--border)' }}>
+                  {([
+                    { id: 'context', icon: <Clock size={12} />, label: 'Context' },
+                    { id: 'related', icon: <Link2 size={12} />, label: `Related${related.length ? ` (${related.length})` : ''}` },
+                  ] as const).map(tab => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setSidebarTab(tab.id)}
+                      className="flex flex-1 items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors"
+                      style={{
+                        color: sidebarTab === tab.id ? 'var(--text)' : 'var(--text-muted)',
+                        borderBottom: sidebarTab === tab.id ? '2px solid var(--accent)' : '2px solid transparent',
+                      }}
+                    >
+                      {tab.icon}
+                      {tab.label}
+                    </button>
+                  ))}
                 </div>
 
-                {loadingCtx ? (
-                  <p className="text-xs text-center py-4" style={{ color: 'var(--text-muted)' }}>Loading…</p>
-                ) : context ? (
-                  <div className="space-y-1">
-                    {context.context.map(c => (
-                      <div
-                        key={c.capture_id}
-                        className="flex items-center gap-2 rounded-lg px-2 py-2 text-xs transition-colors"
-                        style={{
-                          background: c.is_center ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent',
-                          borderLeft: c.is_center ? '2px solid var(--accent)' : '2px solid transparent',
-                        }}
-                      >
-                        <span style={{ color: SOURCE_COLORS[c.source_type] ?? 'var(--text-muted)', flexShrink: 0 }}>
-                          {SOURCE_ICONS[c.source_type]}
-                        </span>
-                        <span className="flex-1 truncate" style={{ color: c.is_center ? 'var(--text)' : 'var(--text-muted)' }}>
-                          {c.window_title || c.app_name || c.source_type}
-                        </span>
-                        <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>
-                          {new Date(c.timestamp + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
+                <div className="flex-1 overflow-y-auto p-3">
+                  {sidebarTab === 'context' && (
+                    loadingCtx ? (
+                      <p className="text-xs text-center py-4" style={{ color: 'var(--text-muted)' }}>Loading…</p>
+                    ) : context ? (
+                      <div className="space-y-1">
+                        {context.context.map(c => (
+                          <div
+                            key={c.capture_id}
+                            className="flex items-center gap-2 rounded-lg px-2 py-2 text-xs"
+                            style={{
+                              background: c.is_center ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent',
+                              borderLeft: c.is_center ? '2px solid var(--accent)' : '2px solid transparent',
+                            }}
+                          >
+                            <span style={{ color: SOURCE_COLORS[c.source_type] ?? 'var(--text-muted)', flexShrink: 0 }}>
+                              {SOURCE_ICONS[c.source_type]}
+                            </span>
+                            <span className="flex-1 truncate" style={{ color: c.is_center ? 'var(--text)' : 'var(--text-muted)' }}>
+                              {c.window_title || c.app_name || c.source_type}
+                            </span>
+                            <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>
+                              {new Date(c.timestamp + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-center py-4" style={{ color: 'var(--text-muted)' }}>No context available</p>
-                )}
+                    ) : (
+                      <p className="text-xs text-center py-4" style={{ color: 'var(--text-muted)' }}>No context available</p>
+                    )
+                  )}
+
+                  {sidebarTab === 'related' && (
+                    related.length === 0 ? (
+                      <p className="text-xs text-center py-4" style={{ color: 'var(--text-muted)' }}>
+                        No related captures found yet.<br />Graph builds as captures are indexed.
+                      </p>
+                    ) : (
+                      <div className="space-y-1">
+                        {related.map(r => (
+                          <div
+                            key={r.capture_id}
+                            className="rounded-lg px-2 py-2 text-xs space-y-0.5"
+                            style={{ background: 'color-mix(in srgb, var(--accent) 8%, transparent)' }}
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <span style={{ color: SOURCE_COLORS[r.source_type] ?? 'var(--text-muted)', flexShrink: 0 }}>
+                                {SOURCE_ICONS[r.source_type]}
+                              </span>
+                              <span className="flex-1 truncate font-medium" style={{ color: 'var(--text)' }}>
+                                {r.window_title || r.app_name || r.source_type}
+                              </span>
+                            </div>
+                            <p className="truncate" style={{ color: 'var(--text-muted)' }}>
+                              {r.content_preview.slice(0, 60)}
+                            </p>
+                            <div className="flex items-center justify-between">
+                              <span style={{ color: 'var(--text-muted)' }}>
+                                {r.timestamp.slice(0, 10)}
+                              </span>
+                              <span style={{ color: 'var(--accent)' }}>
+                                {Math.round(r.similarity * 100)}% similar
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  )}
+                </div>
               </div>
             </div>
           </motion.div>

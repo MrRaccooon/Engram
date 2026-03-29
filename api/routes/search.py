@@ -171,6 +171,33 @@ async def search(req: SearchRequest) -> SearchResponse:
     )
 
 
+@router.get("/related/{capture_id}")
+async def related(capture_id: str, limit: int = Query(default=5, ge=1, le=20)) -> dict:
+    """Return captures semantically related to the given capture_id."""
+    try:
+        from storage.graph_db import get_related
+        results = get_related(capture_id, limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    formatted = [
+        {
+            "capture_id": r.get("id", ""),
+            "source_type": r.get("source_type", ""),
+            "timestamp": r.get("timestamp", ""),
+            "content_preview": (r.get("content") or "")[:200],
+            "thumb_path": r.get("thumb_path"),
+            "window_title": r.get("window_title", ""),
+            "app_name": r.get("app_name", ""),
+            "url": r.get("url", ""),
+            "similarity": r.get("similarity", 0),
+            "edge_type": r.get("edge_type", "semantic"),
+        }
+        for r in results
+    ]
+    return {"capture_id": capture_id, "related": formatted, "count": len(formatted)}
+
+
 @router.get("/search/timeline")
 async def timeline(date: str = Query(..., description="Date in YYYY-MM-DD format")) -> dict:
     """Return all captures for a given day, ordered chronologically."""

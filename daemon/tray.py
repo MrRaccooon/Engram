@@ -108,6 +108,80 @@ def _quit(icon: "pystray.Icon", item) -> None:
     icon.stop()
 
 
+def show_digest() -> None:
+    """
+    Show the daily morning digest as a system tray notification (Phase 5).
+
+    Displays:
+      1. Yesterday's consolidated insight summary
+      2. Top app by time spent
+      3. One resurfaced memory from 7-21 days ago
+
+    Called daily at 8 AM by APScheduler. Fails silently if tray is unavailable.
+    """
+    try:
+        from datetime import datetime, timedelta
+        from storage import metadata_db, vector_db
+        from pipeline import embedder
+
+        yesterday = (datetime.utcnow() - timedelta(days=1)).date().isoformat()
+
+        # 1. Yesterday's insight
+        rows = metadata_db.fetch_insights_for_day(yesterday)
+        if rows:
+            summary = rows[0]["summary"][:120]
+        else:
+            summary = "No insight summary available for yesterday."
+
+        # 2. Top app by time (screenshot count as proxy)
+        with metadata_db._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT app_name, COUNT(*) as cnt FROM captures
+                WHERE date(timestamp) = ? AND source_type='screenshot'
+                  AND app_name IS NOT NULL AND app_name != ''
+                GROUP BY app_name ORDER BY cnt DESC LIMIT 1
+                """,
+                (yesterday,),
+            ).fetchone()
+        top_app = f"Top app: {row['app_name']}" if row else ""
+
+        # 3. Resurface: find an old capture similar to yesterday's insight
+        resurface_text = ""
+        if rows:
+            insight_vec = embedder.embed_text(rows[0]["summary"])
+            if insight_vec:
+                old_cutoff = (datetime.utcnow() - timedelta(days=7)).isoformat()
+                older_cutoff = (datetime.utcnow() - timedelta(days=21)).isoformat()
+                old_results = vector_db.query_text(
+                    insight_vec,
+                    top_k=5,
+                    where={"timestamp": {"$lte": old_cutoff, "$gte": older_cutoff}},
+                )
+                if old_results:
+                    preview = old_results[0].get("content_preview", "")[:80]
+                    old_ts = old_results[0].get("timestamp", "")[:10]
+                    resurface_text = f"Memory from {old_ts}: {preview}"
+
+        lines = [f"Yesterday: {summary}"]
+        if top_app:
+            lines.append(top_app)
+        if resurface_text:
+            lines.append(resurface_text)
+
+        message = "\n".join(lines)
+        title = "Engram — Good morning"
+
+        if _icon_instance and _TRAY_AVAILABLE:
+            _icon_instance.notify(message, title)
+            logger.info("Daily digest notification shown")
+        else:
+            logger.info(f"Daily digest (no tray): {message}")
+
+    except Exception as exc:
+        logger.warning(f"Daily digest failed: {exc}")
+
+
 def _status_refresh_loop(icon: "pystray.Icon") -> None:
     """Refresh tray menu every 30 seconds to update status counts."""
     import time

@@ -83,3 +83,32 @@ privacy:
   require_local_auth: false
   # Log every search query and data access event to audit.log
   audit_logging: true
+
+intelligence:
+  # API provider for the frontier model: anthropic | openai | disabled
+  api_provider: "disabled"
+  # Model used for standard queries
+  api_model: "claude-haiku-4-5"
+  # Model used when the user requests a deeper answer
+  api_model_deep: "claude-opus-4-5"
+  # Local Ollama model for pre-summarization before API call (set "" to skip)
+  local_summarizer: ""
+  # Chunks with sensitivity score >= this threshold are blocked from the API
+  sensitivity_threshold: 0.4
+  # Maximum tokens of context to send per API call
+  max_context_tokens: 800
+  # Show user a preview of what will be sent before making the API call
+  confirm_before_send: true
+
+consolidation:
+  # Time to run the nightly consolidation worker (24h format)
+  run_hour: 2
+  run_minute: 0
+  # Session gap in minutes — captures this far apart start a new session
+  session_gap_minutes: 30
+
+mcp:
+  # Expose Engram as an MCP tool server for Claude Desktop / Cursor / etc.
+  enabled: false
+  host: "127.0.0.1"
+  port: 8766
