@@ -2,7 +2,7 @@
 Cold-path embedding worker.
 
 Called by the APScheduler every N minutes. Drains the pending job_queue:
-  1. OCR  → extract text from screenshot thumbnails
+  1. Build searchable text from metadata (window_title + app_name) + any content
   2. Chunk → split long text into overlapping 512-token windows
   3. Embed → text vectors (sentence-transformers) + visual vectors (CLIP)
   4. Upsert → write vectors + metadata into ChromaDB
@@ -21,7 +21,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from pipeline import chunker, embedder, ocr
+from pipeline import chunker, embedder
 from storage import metadata_db, vector_db
 
 _BATCH_SIZE = 16  # captures processed per worker invocation
@@ -69,16 +69,24 @@ def _process_capture(row) -> None:
     url: str = row["url"] or ""
 
     # ── 1. Extract text ───────────────────────────────────────────────────────
-    # For screenshots, OCR is now done at capture time on the full-res image
-    # and stored in `content`. Only fall back to thumbnail OCR if content is empty.
     text = content
 
-    if source_type == "screenshot" and not text.strip() and thumb_path:
-        ocr_text = ocr.extract_from_image(thumb_path)
-        if ocr_text:
-            text = ocr_text
-        else:
-            logger.debug(f"OCR yielded nothing for {capture_id[:8]}, skipping text embed")
+    if source_type == "screenshot":
+        # For screenshots, build a rich metadata string that's always available.
+        # Window title + app name give strong context for semantic search
+        # (e.g. "Cursor - state.py - Engram" or "WhatsApp" or "GitHub - Brave").
+        meta_parts = []
+        if app_name:
+            clean_app = app_name.replace(".exe", "")
+            meta_parts.append(clean_app)
+        if window_title:
+            meta_parts.append(window_title)
+        meta_text = " — ".join(meta_parts) if meta_parts else ""
+
+        if not text.strip():
+            text = meta_text
+        elif meta_text:
+            text = f"{meta_text}\n{text}"
 
     if not text.strip() and source_type != "screenshot":
         logger.debug(f"No text content for {capture_id[:8]} ({source_type}), skipping text embed")

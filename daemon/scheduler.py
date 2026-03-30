@@ -48,7 +48,7 @@ def _job_screenshot(storage_root: Path, cfg: dict) -> None:
     cap_cfg = cfg.get("capture", {})
     excluded_apps: list[str] = cap_cfg.get("excluded_apps", [])
     suppress_incognito: bool = cap_cfg.get("suppress_incognito", True)
-    thumb_size: int = cfg.get("storage", {}).get("thumbnail_size", 400)
+    thumb_size: int = cfg.get("storage", {}).get("thumbnail_size", 1024)
 
     window_title, app_name = window_context.get_active_window()
     if window_context.is_excluded(app_name, excluded_apps):

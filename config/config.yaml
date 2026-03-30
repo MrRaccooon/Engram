@@ -41,7 +41,8 @@ storage:
   # Set false to save ~10x storage (thumbnails kept regardless)
   keep_raw_screenshots: false
   # Thumbnail max dimension in pixels (longest side)
-  thumbnail_size: 400
+  # 1024px balances disk size (~50KB) with OCR readability
+  thumbnail_size: 1024
   # Delete captures older than this many days (0 = keep forever)
   retention_days: 90
   # Auto-cleanup when storage exceeds this limit (GB). 0 = disabled.
