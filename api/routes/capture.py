@@ -17,6 +17,8 @@ import yaml
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from loguru import logger
+
 from storage import metadata_db, vector_db
 
 router = APIRouter(tags=["capture"])
@@ -53,6 +55,7 @@ async def status() -> dict:
     visual_vecs = vector_db.count_visual()
     storage_mb = _storage_mb(base)
 
+    logger.debug(f"Status: indexed={indexed} queue={queue_depth} text_vecs={text_vecs} visual_vecs={visual_vecs} storage={storage_mb}MB")
     return {
         "daemon_running": True,
         "indexed_captures": indexed,
@@ -87,12 +90,14 @@ async def manual_capture() -> ManualCaptureResponse:
         ss_id = screenshot.capture(storage_root=base, thumbnail_size=thumb_size)
         clip_id = clipboard.poll()
         primary_id = ss_id or clip_id or "none"
+        logger.info(f"Manual capture: screenshot={ss_id or 'skip'} clipboard={clip_id or 'skip'}")
         return ManualCaptureResponse(
             capture_id=primary_id,
             status="queued",
             message="Screenshot and clipboard captured and queued for embedding",
         )
     except Exception as exc:
+        logger.error(f"Manual capture failed: {exc}")
         raise HTTPException(status_code=500, detail=f"Capture failed: {exc}")
 
 
@@ -109,6 +114,7 @@ async def context(
     """
     row = metadata_db.fetch_capture_by_id(capture_id)
     if not row:
+        logger.warning(f"Context: capture {capture_id[:8]} not found")
         raise HTTPException(status_code=404, detail=f"Capture {capture_id} not found")
 
     center_ts: str = row["timestamp"]

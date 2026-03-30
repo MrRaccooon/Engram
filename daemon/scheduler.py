@@ -42,15 +42,28 @@ def _init_storage(cfg: dict) -> Path:
 
 # ── job functions (each wraps a collector call) ───────────────────────────────
 
+_TERMINAL_APP_KEYWORDS = (
+    "windowsterminal", "cmd", "powershell", "wt", "bash", "zsh",
+    "alacritty", "wezterm", "conhost", "mintty",
+)
+# Tracks how many 5-second ticks have passed since last screenshot in
+# normal (non-terminal) mode so we only fire every N ticks for normal apps.
+_screenshot_tick = 0
+
+
 def _job_screenshot(storage_root: Path, cfg: dict) -> None:
+    global _screenshot_tick
     from collectors import screenshot, window_context
 
     cap_cfg = cfg.get("capture", {})
     excluded_apps: list[str] = cap_cfg.get("excluded_apps", [])
     suppress_incognito: bool = cap_cfg.get("suppress_incognito", True)
     thumb_size: int = cfg.get("storage", {}).get("thumbnail_size", 1024)
+    normal_interval: int = cap_cfg.get("screenshot_interval_seconds", 30)
 
     window_title, app_name = window_context.get_active_window()
+    app_lower = (app_name or "").lower()
+
     if window_context.is_excluded(app_name, excluded_apps):
         logger.debug(f"Screenshot suppressed: excluded app '{app_name}'")
         return
@@ -58,7 +71,19 @@ def _job_screenshot(storage_root: Path, cfg: dict) -> None:
         logger.debug("Screenshot suppressed: incognito window detected")
         return
 
-    screenshot.capture(storage_root=storage_root, thumbnail_size=thumb_size)
+    # Adaptive rate: terminals get a screenshot every tick (5s).
+    # Other apps only fire once per (normal_interval / 5) ticks.
+    is_terminal = any(kw in app_lower for kw in _TERMINAL_APP_KEYWORDS)
+    _screenshot_tick += 1
+
+    if is_terminal:
+        # Always capture — terminal output disappears fast
+        screenshot.capture(storage_root=storage_root, thumbnail_size=thumb_size)
+        logger.debug(f"Adaptive screenshot (terminal active): {app_name}")
+    else:
+        ticks_needed = max(1, normal_interval // 5)
+        if _screenshot_tick % ticks_needed == 0:
+            screenshot.capture(storage_root=storage_root, thumbnail_size=thumb_size)
 
 
 def _job_clipboard(cfg: dict) -> None:
@@ -171,10 +196,13 @@ def start() -> None:
 
     _scheduler = BackgroundScheduler(daemon=True)
 
+    # Screenshots run on a fixed 5-second tick.
+    # _job_screenshot internally decides whether to actually capture
+    # based on the active app (terminals every tick, others every N ticks).
     _scheduler.add_job(
         _job_screenshot,
         trigger="interval",
-        seconds=screenshot_interval,
+        seconds=5,
         kwargs={"storage_root": storage_root, "cfg": cfg},
         id="screenshot",
         max_instances=1,
@@ -243,6 +271,10 @@ def start() -> None:
         excluded_apps=cap.get("excluded_apps", []),
     )
 
+    # Start shell history watcher (passively indexes every command typed)
+    from collectors import shell_history
+    shell_history.start()
+
     _scheduler.start()
     logger.info(
         f"Engram scheduler started | "
@@ -257,7 +289,9 @@ def start() -> None:
 
 def stop() -> None:
     from collectors import filesystem
+    from collectors import shell_history
     filesystem.stop()
+    shell_history.stop()
     if _scheduler:
         _scheduler.shutdown(wait=False)
     logger.info("Engram scheduler stopped")

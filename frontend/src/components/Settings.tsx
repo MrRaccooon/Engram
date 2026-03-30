@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Save, Trash2, RefreshCw, AlertTriangle } from 'lucide-react'
 import { configApi, captureApi, type StatusResponse } from '../api/client'
+import { sessionLogger } from '../utils/sessionLogger'
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -67,8 +68,9 @@ export function SettingsPanel() {
   const save = async () => {
     if (!cfg) return
     setSaving(true)
-    try { await configApi.update(cfg); setSaved(true); setTimeout(() => setSaved(false), 2000) }
-    catch { alert('Failed to save settings') }
+    sessionLogger.log('settings', 'save')
+    try { await configApi.update(cfg); setSaved(true); setTimeout(() => setSaved(false), 2000); sessionLogger.log('settings', 'saved') }
+    catch { alert('Failed to save settings'); sessionLogger.log('settings', 'save_failed') }
     finally { setSaving(false) }
   }
 
@@ -76,8 +78,9 @@ export function SettingsPanel() {
     if (!deleteDate) return
     if (!confirm(`Delete all captures before ${deleteDate}? This cannot be undone.`)) return
     setDeleting(true)
-    try { await configApi.deleteData(deleteDate); alert('Data deleted successfully') }
-    catch { alert('Deletion failed') }
+    sessionLogger.log('settings', 'delete_data', { before: deleteDate })
+    try { await configApi.deleteData(deleteDate); alert('Data deleted successfully'); sessionLogger.log('settings', 'data_deleted') }
+    catch { alert('Deletion failed'); sessionLogger.log('settings', 'delete_failed') }
     finally { setDeleting(false) }
   }
 
@@ -133,7 +136,7 @@ export function SettingsPanel() {
         </Field>
         <div className="pt-2">
           <button
-            onClick={async () => { setRunningRetention(true); await configApi.runRetention().catch(() => {}); setRunningRetention(false) }}
+            onClick={async () => { sessionLogger.log('settings', 'run_retention'); setRunningRetention(true); await configApi.runRetention().catch(() => {}); setRunningRetention(false) }}
             disabled={runningRetention}
             className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm transition-colors"
             style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}

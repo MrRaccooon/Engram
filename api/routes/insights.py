@@ -48,6 +48,7 @@ async def get_insights(
         for row in rows
     ]
 
+    logger.info(f"Insights: date={date or 'last_7_days'} → {len(insights)} entries")
     return {"date": date, "insights": insights, "count": len(insights)}
 
 
@@ -57,6 +58,7 @@ async def get_latest_insight() -> dict[str, Any]:
     try:
         row = metadata_db.fetch_latest_insight()
     except Exception as exc:
+        logger.error(f"Latest insight fetch failed: {exc}")
         return {"insight": None, "error": str(exc)}
 
     if not row:

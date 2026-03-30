@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { X, Clock, Monitor, Clipboard, Globe, FileText, Mic, ExternalLink, Link2 } from 'lucide-react'
 import { captureApi, relatedApi, type ContextResponse, type RelatedCapture } from '../api/client'
 import { useStore } from '../store/useStore'
+import { sessionLogger } from '../utils/sessionLogger'
 
 const SOURCE_ICONS: Record<string, React.ReactNode> = {
   screenshot: <Monitor size={14} />,
@@ -34,6 +35,7 @@ export function DetailModal() {
 
   useEffect(() => {
     if (!selectedResult) { setContext(null); setRelated([]); return }
+    sessionLogger.log('detail', 'open', { captureId: selectedResult.capture_id, source: selectedResult.source_type })
     setLoadingCtx(true)
     captureApi.context(selectedResult.capture_id, 5)
       .then(setContext)
@@ -41,7 +43,7 @@ export function DetailModal() {
       .finally(() => setLoadingCtx(false))
 
     relatedApi.get(selectedResult.capture_id, 5)
-      .then(d => setRelated(d.related))
+      .then(d => { setRelated(d.related); sessionLogger.log('detail', 'related_loaded', { count: d.related.length }) })
       .catch(() => setRelated([]))
   }, [selectedResult])
 
@@ -152,7 +154,7 @@ export function DetailModal() {
                   ] as const).map(tab => (
                     <button
                       key={tab.id}
-                      onClick={() => setSidebarTab(tab.id)}
+                      onClick={() => { setSidebarTab(tab.id); sessionLogger.log('detail', 'tab', { tab: tab.id }) }}
                       className="flex flex-1 items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors"
                       style={{
                         color: sidebarTab === tab.id ? 'var(--text)' : 'var(--text-muted)',

@@ -64,6 +64,16 @@ class _EngramFileHandler(FileSystemEventHandler):
         # Skip hidden files and Engram's own data directory
         if any(part.startswith(".") for part in path.parts):
             return False
+        # Skip Engram's own log directory to avoid self-indexing loop
+        if "engram" in str(path).lower() and path.suffix == ".log":
+            return False
+        # Skip very large files (>500 KB) — truncation would lose context
+        try:
+            if path.stat().st_size > 512_000:
+                logger.debug(f"Skipping large file: {path.name} ({path.stat().st_size // 1024}KB)")
+                return False
+        except OSError:
+            return False
         # Debounce: ignore events within 5 s of the last event for the same file
         now = datetime.utcnow()
         with self._lock:
@@ -77,9 +87,12 @@ class _EngramFileHandler(FileSystemEventHandler):
         path = Path(event_path)
         if not self._should_process(path):
             return
+
+        # Full-file capture (always)
         content = _extract_text(path)
         if not content or not content.strip():
             return
+
         queue_manager.enqueue(
             source_type="file",
             timestamp=datetime.utcnow(),
@@ -89,6 +102,16 @@ class _EngramFileHandler(FileSystemEventHandler):
             app_name="filesystem",
         )
         logger.debug(f"File indexed: {path.name}")
+
+        # Git diff capture (additive — fires only if file is in a git repo with changes)
+        # Code files only — no diffs for .txt, .pdf, .docx, etc.
+        _CODE_EXTS = {".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java", ".cpp", ".c"}
+        if path.suffix.lower() in _CODE_EXTS:
+            try:
+                from collectors.git_diff import capture_diff_if_changed
+                capture_diff_if_changed(path)
+            except Exception as exc:
+                logger.debug(f"Git diff skipped for {path.name}: {exc}")
 
     def on_modified(self, event: FileModifiedEvent) -> None:  # type: ignore[override]
         if not event.is_directory:

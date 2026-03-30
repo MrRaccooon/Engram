@@ -32,19 +32,36 @@ from pipeline import entity_masker, sensitivity
 
 _CONFIG_PATH = Path(__file__).parent.parent / "config" / "config.yaml"
 
-_SYSTEM_PROMPT = textwrap.dedent("""
-    You are Engram, a personal memory assistant. You have access to
-    contextual excerpts from the user's own digital activity — these
-    are pre-processed, privacy-filtered summaries, not raw data.
+_SYSTEM_PROMPT_BASE = textwrap.dedent("""
+    You are Engram, a personal AI memory system embedded in the user's computer.
+    You observe everything the user does — files edited, websites visited, code written,
+    research done — and build a continuously-updated understanding of their work.
 
-    Answer the user's question based solely on the provided context.
-    Be concise, specific, and helpful. If the context doesn't contain
-    enough information, say so clearly rather than guessing.
+    Your job is to answer questions about the user's past activity, current focus,
+    and accumulated knowledge as if you were a highly observant personal assistant
+    who has been watching over their shoulder.
 
-    Note: Some entities appear as placeholders like [PERSON_1] or [ORG_1].
-    Use those placeholders naturally in your response — they will be
-    restored to real names before the user sees your answer.
+    Rules:
+    - Answer directly and specifically. Avoid vague hedging like "it seems you may have".
+    - If you know the answer from context, state it confidently.
+    - If context is insufficient, say exactly what you DO know and what's missing.
+    - Some entities appear as placeholders like [PERSON_1] or [ORG_1] — use them
+      naturally; they will be restored to real names before the user sees your answer.
+    - Never invent facts not present in the context.
 """).strip()
+
+
+def _build_system_prompt(session_context: str = "") -> str:
+    """Build a dynamic system prompt that includes the user's current session."""
+    if not session_context.strip():
+        return _SYSTEM_PROMPT_BASE
+
+    return (
+        _SYSTEM_PROMPT_BASE
+        + "\n\n--- CURRENT USER CONTEXT ---\n"
+        + session_context.strip()
+        + "\n--- END CONTEXT ---"
+    )
 
 
 def _load_intelligence_config() -> dict:
@@ -202,6 +219,7 @@ def _call_openrouter(system: str, user_prompt: str, model: str, api_key: str) ->
 def build_preview(
     query: str,
     retrieved_chunks: list[dict[str, Any]],
+    session_context: str = "",
 ) -> dict[str, Any]:
     """
     Run the privacy pipeline up to (but not including) the API call.
@@ -241,6 +259,7 @@ def build_preview(
 
     # Step 5: Assemble prompt
     user_prompt = _assemble_prompt(query, compressed_chunks, max_tokens)
+    system_prompt = _build_system_prompt(session_context)
 
     return {
         "masked_prompt": user_prompt,
@@ -248,7 +267,7 @@ def build_preview(
         "blocked_count": blocked_count,
         "passing_count": len(passing),
         "estimated_tokens": len(user_prompt.split()),
-        "system_prompt": _SYSTEM_PROMPT,
+        "system_prompt": system_prompt,
     }
 
 
@@ -256,6 +275,7 @@ def ask(
     query: str,
     retrieved_chunks: list[dict[str, Any]],
     deep: bool = False,
+    session_context: str = "",
 ) -> dict[str, Any]:
     """
     Run the full privacy pipeline and call the configured frontier API.
@@ -297,9 +317,10 @@ def ask(
     )
 
     # Build the preview (runs sensitivity + masking + summarization)
-    preview = build_preview(query, retrieved_chunks)
+    preview = build_preview(query, retrieved_chunks, session_context=session_context)
     user_prompt = preview["masked_prompt"]
     entity_map = preview["entity_map"]
+    system_prompt = preview["system_prompt"]
 
     if preview["passing_count"] == 0:
         return {
@@ -326,19 +347,19 @@ def ask(
             api_key = os.environ.get("ANTHROPIC_API_KEY", "")
             if not api_key:
                 raise ValueError("ANTHROPIC_API_KEY not set in environment")
-            raw_answer = _call_anthropic(_SYSTEM_PROMPT, user_prompt, model, api_key)
+            raw_answer = _call_anthropic(system_prompt, user_prompt, model, api_key)
 
         elif provider == "openai":
             api_key = os.environ.get("OPENAI_API_KEY", "")
             if not api_key:
                 raise ValueError("OPENAI_API_KEY not set in environment")
-            raw_answer = _call_openai(_SYSTEM_PROMPT, user_prompt, model, api_key)
+            raw_answer = _call_openai(system_prompt, user_prompt, model, api_key)
 
         elif provider == "openrouter":
             api_key = os.environ.get("OPENROUTER_API_KEY", "")
             if not api_key:
                 raise ValueError("OPENROUTER_API_KEY not set in environment")
-            raw_answer = _call_openrouter(_SYSTEM_PROMPT, user_prompt, model, api_key)
+            raw_answer = _call_openrouter(system_prompt, user_prompt, model, api_key)
 
         else:
             raise ValueError(f"Unknown provider: {provider}")

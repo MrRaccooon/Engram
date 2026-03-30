@@ -23,6 +23,7 @@ _text_model = None      # SentenceTransformer
 _clip_model = None      # open_clip model
 _clip_preprocess = None # open_clip image transform
 _clip_tokenizer = None  # open_clip tokenizer
+_clip_broken = False    # set True if CLIP init fails — skip all subsequent calls
 
 _TEXT_MODEL_NAME = "all-MiniLM-L6-v2"
 _CLIP_MODEL_NAME = "ViT-B-32"
@@ -70,30 +71,38 @@ def embed_text(text: str) -> list[float]:
 # ── Visual (CLIP) embedding ────────────────────────────────────────────────────
 
 def _get_clip():
-    global _clip_model, _clip_preprocess, _clip_tokenizer
+    global _clip_model, _clip_preprocess, _clip_tokenizer, _clip_broken
+    if _clip_broken:
+        raise RuntimeError("CLIP model failed to initialise (see earlier log)")
     if _clip_model is None:
         import open_clip
         logger.info(f"Loading CLIP model: {_CLIP_MODEL_NAME} / {_CLIP_PRETRAINED}…")
-        _clip_model, _, _clip_preprocess = open_clip.create_model_and_transforms(
-            _CLIP_MODEL_NAME, pretrained=_CLIP_PRETRAINED, device="cpu"
-        )
-        # open_clip 3.x + torch 2.11 may load weights on meta device;
-        # materialize to CPU so encode_image / encode_text actually work.
         try:
-            _clip_model = _clip_model.to_empty(device="cpu")
-            import open_clip as _oc
-            _pt = _oc.get_pretrained_cfg(_CLIP_MODEL_NAME, _CLIP_PRETRAINED)
-            if _pt:
-                from open_clip.pretrained import download_pretrained
-                ckpt = download_pretrained(_pt)
-                import torch as _torch
-                state = _torch.load(ckpt, map_location="cpu", weights_only=True)
-                _clip_model.load_state_dict(state, strict=False, assign=True)
-        except Exception:
-            pass
-        _clip_model.eval()
-        _clip_tokenizer = open_clip.get_tokenizer(_CLIP_MODEL_NAME)
-        logger.info("CLIP model ready")
+            _clip_model, _, _clip_preprocess = open_clip.create_model_and_transforms(
+                _CLIP_MODEL_NAME, pretrained=_CLIP_PRETRAINED, device="cpu"
+            )
+            # open_clip 3.x + torch 2.11 may load weights on meta device;
+            # materialize to CPU so encode_image / encode_text actually work.
+            try:
+                _clip_model = _clip_model.to_empty(device="cpu")
+                import open_clip as _oc
+                _pt = _oc.get_pretrained_cfg(_CLIP_MODEL_NAME, _CLIP_PRETRAINED)
+                if _pt:
+                    from open_clip.pretrained import download_pretrained
+                    ckpt = download_pretrained(_pt)
+                    import torch as _torch
+                    state = _torch.load(ckpt, map_location="cpu", weights_only=True)
+                    _clip_model.load_state_dict(state, strict=False, assign=True)
+            except Exception as meta_exc:
+                logger.warning(f"CLIP meta-device reload failed, using default weights: {meta_exc}")
+            _clip_model.eval()
+            _clip_tokenizer = open_clip.get_tokenizer(_CLIP_MODEL_NAME)
+            logger.info("CLIP model ready")
+        except Exception as exc:
+            _clip_broken = True
+            _clip_model = None
+            logger.error(f"CLIP model initialisation failed — visual embeddings disabled: {exc}")
+            raise
     return _clip_model, _clip_preprocess, _clip_tokenizer
 
 

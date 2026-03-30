@@ -1,10 +1,47 @@
-import axios from 'axios'
+import axios, { type InternalAxiosRequestConfig } from 'axios'
+import { sessionLogger } from '../utils/sessionLogger'
 
 export const api = axios.create({
   baseURL: '/api',
   timeout: 30000,
   headers: { 'Content-Type': 'application/json' },
 })
+
+// ── Axios interceptors: auto-log every API call ──────────────────────────────
+
+api.interceptors.request.use((cfg: InternalAxiosRequestConfig) => {
+  ;(cfg as unknown as Record<string, number>)._t0 = performance.now()
+  return cfg
+})
+
+api.interceptors.response.use(
+  (res) => {
+    const t0 = (res.config as unknown as Record<string, number>)._t0
+    const ms = t0 ? Math.round(performance.now() - t0) : undefined
+    const url = res.config.url ?? ''
+    if (!url.includes('/logs') && !url.includes('/health')) {
+      sessionLogger.log('api', `${res.config.method?.toUpperCase()} ${url}`, {
+        status: res.status,
+      }, ms)
+    }
+    return res
+  },
+  (err) => {
+    const cfg = err?.config
+    const t0 = (cfg as unknown as Record<string, number>)?._t0
+    const ms = t0 ? Math.round(performance.now() - t0) : undefined
+    const url = cfg?.url ?? ''
+    const status = err?.response?.status ?? 0
+    const message = err?.response?.data?.detail ?? err?.message ?? 'unknown'
+    if (!url.includes('/logs')) {
+      sessionLogger.log('error', `${cfg?.method?.toUpperCase()} ${url} FAILED`, {
+        status,
+        error: message,
+      }, ms)
+    }
+    return Promise.reject(err)
+  },
+)
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

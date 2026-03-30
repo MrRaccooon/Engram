@@ -323,18 +323,22 @@ def upsert_edge(source_id: str, target_id: str, similarity: float, edge_type: st
 
 
 def fetch_related_captures(capture_id: str, limit: int = 5) -> list[sqlite3.Row]:
-    """Return captures related to the given capture_id via the graph."""
+    """Return captures related to the given capture_id via the graph (both directions)."""
     with _connect() as conn:
         rows = conn.execute(
             """
             SELECT c.*, e.similarity, e.edge_type
             FROM capture_edges e
-            JOIN captures c ON c.id = e.target_id
-            WHERE e.source_id = ?
+            JOIN captures c ON c.id = CASE
+                WHEN e.source_id = ? THEN e.target_id
+                ELSE e.source_id
+            END
+            WHERE (e.source_id = ? OR e.target_id = ?)
+              AND c.id != ?
             ORDER BY e.similarity DESC
             LIMIT ?
             """,
-            (capture_id, limit),
+            (capture_id, capture_id, capture_id, capture_id, limit),
         ).fetchall()
     return rows
 
@@ -361,4 +365,58 @@ def fetch_captures_by_tag(tag: str, limit: int = 20) -> list[sqlite3.Row]:
             LIMIT ?
             """,
             (tag, limit),
+        ).fetchall()
+
+
+# ── Session context helpers ────────────────────────────────────────────────────
+
+def fetch_recent_captures(minutes: int = 60, limit: int = 40) -> list[sqlite3.Row]:
+    """Return the last N captures from the past `minutes` minutes."""
+    from datetime import timedelta
+    cutoff = (datetime.utcnow() - timedelta(minutes=minutes)).isoformat()
+    with _connect() as conn:
+        return conn.execute(
+            """
+            SELECT * FROM captures
+            WHERE timestamp >= ? AND status = 'indexed'
+            ORDER BY timestamp DESC
+            LIMIT ?
+            """,
+            (cutoff, limit),
+        ).fetchall()
+
+
+def fetch_top_apps(hours: int = 24, limit: int = 5) -> list[sqlite3.Row]:
+    """Return the most-used apps over the last N hours, by capture count."""
+    from datetime import timedelta
+    cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+    with _connect() as conn:
+        return conn.execute(
+            """
+            SELECT app_name, COUNT(*) AS cnt
+            FROM captures
+            WHERE timestamp >= ? AND app_name IS NOT NULL AND app_name != ''
+            GROUP BY app_name
+            ORDER BY cnt DESC
+            LIMIT ?
+            """,
+            (cutoff, limit),
+        ).fetchall()
+
+
+def fetch_top_window_titles(hours: int = 4, limit: int = 8) -> list[sqlite3.Row]:
+    """Return distinct window titles seen in the last N hours (for context)."""
+    from datetime import timedelta
+    cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+    with _connect() as conn:
+        return conn.execute(
+            """
+            SELECT window_title, app_name, MAX(timestamp) AS last_seen, COUNT(*) AS cnt
+            FROM captures
+            WHERE timestamp >= ? AND window_title IS NOT NULL AND window_title != ''
+            GROUP BY window_title
+            ORDER BY cnt DESC
+            LIMIT ?
+            """,
+            (cutoff, limit),
         ).fetchall()

@@ -112,45 +112,112 @@ def _heuristic_summary(session: list[Any]) -> tuple[str, list[str]]:
     return summary, topics
 
 
-def _ollama_summary(session: list[Any], model: str) -> tuple[str, list[str]]:
-    """Call local Ollama to summarize a session. Falls back to heuristic on failure."""
+def _build_capture_texts(session: list[Any]) -> list[str]:
+    """Build a list of text snippets from session captures for LLM summarization."""
+    capture_texts = []
+    for cap in session[:25]:
+        # Prefer content, fall back to window title
+        text = cap["content"] or cap["window_title"] or ""
+        app = (cap["app_name"] or "").replace(".exe", "")
+        ts = (cap["timestamp"] or "")[:16]
+        if text.strip():
+            capture_texts.append(f"[{ts}] {app}: {text[:250]}")
+    return capture_texts
+
+
+def _api_summary(session: list[Any]) -> tuple[str, list[str]] | None:
+    """
+    Use the configured frontier API (OpenRouter / OpenAI / Anthropic) to summarize
+    a session. Returns (summary, topics) or None on failure.
+    """
+    import os
     try:
-        import requests as req
+        cfg = _load_config()
+        intel = cfg.get("intelligence", {})
+        provider = intel.get("api_provider", "disabled")
+        model = intel.get("api_model", "openai/gpt-4o-mini")
 
-        capture_texts = []
-        for cap in session[:20]:  # cap at 20 captures per session
-            text = cap["content"] or cap["window_title"] or ""
-            app = cap["app_name"] or ""
-            ts = (cap["timestamp"] or "")[:19]
-            if text.strip():
-                capture_texts.append(f"[{ts}] {app}: {text[:200]}")
+        if provider == "disabled":
+            return None
 
+        capture_texts = _build_capture_texts(session)
         if not capture_texts:
-            return _heuristic_summary(session)
+            return None
 
         prompt = _CONSOLIDATION_PROMPT.format(captures="\n".join(capture_texts))
+        apps_in_session = list({(cap["app_name"] or "").replace(".exe", "") for cap in session if cap["app_name"]})
 
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"num_predict": 150, "temperature": 0.2},
-        }
-        resp = req.post(
-            "http://127.0.0.1:11434/api/generate",
-            json=payload,
-            timeout=30,
+        from openai import OpenAI
+
+        if provider == "openrouter":
+            api_key = os.environ.get("OPENROUTER_API_KEY", "")
+            if not api_key:
+                return None
+            client = OpenAI(
+                api_key=api_key,
+                base_url="https://openrouter.ai/api/v1",
+                default_headers={"HTTP-Referer": "https://github.com/Engram", "X-Title": "Engram"},
+            )
+        elif provider == "openai":
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+            if not api_key:
+                return None
+            client = OpenAI(api_key=api_key)
+        else:
+            return None
+
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You summarize a person's digital work session concisely."},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=200,
+            temperature=0.2,
         )
-        if resp.ok:
-            summary = resp.json().get("response", "").strip()
-            if summary:
-                # Extract topics from the summary using simple keyword heuristic
-                apps_in_session = list({cap["app_name"] for cap in session if cap["app_name"]})
-                return summary, apps_in_session[:5]
+        summary = (response.choices[0].message.content or "").strip()
+        if summary:
+            logger.debug(f"Consolidation: API summary generated via {provider}/{model}")
+            return summary, apps_in_session[:5]
 
     except Exception as exc:
-        logger.debug(f"Ollama unavailable for consolidation: {exc}")
+        logger.debug(f"API summary failed for consolidation: {exc}")
 
+    return None
+
+
+def _ollama_summary(session: list[Any], model: str) -> tuple[str, list[str]]:
+    """
+    Try Ollama first, then frontier API, then heuristic fallback.
+    """
+    # 1. Try Ollama (local, free)
+    if model:
+        try:
+            import requests as req
+            capture_texts = _build_capture_texts(session)
+            if capture_texts:
+                prompt = _CONSOLIDATION_PROMPT.format(captures="\n".join(capture_texts))
+                payload = {
+                    "model": model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"num_predict": 150, "temperature": 0.2},
+                }
+                resp = req.post("http://127.0.0.1:11434/api/generate", json=payload, timeout=30)
+                if resp.ok:
+                    summary = resp.json().get("response", "").strip()
+                    if summary:
+                        apps_in_session = list({cap["app_name"] for cap in session if cap["app_name"]})
+                        return summary, apps_in_session[:5]
+        except Exception as exc:
+            logger.debug(f"Ollama unavailable for consolidation: {exc}")
+
+    # 2. Fall back to frontier API (OpenRouter/OpenAI)
+    api_result = _api_summary(session)
+    if api_result:
+        return api_result
+
+    # 3. Final fallback: heuristic
     return _heuristic_summary(session)
 
 

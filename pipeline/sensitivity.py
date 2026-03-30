@@ -54,8 +54,9 @@ _SCORED_PATTERNS: list[tuple[float, str]] = [
     (0.9, r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b"),
     # Indian Aadhaar number
     (0.9, r"\b\d{4}\s\d{4}\s\d{4}\b"),
-    # Passwords / secrets in text
-    (0.6, r"\b(?:password|passwd|secret|api[_\s]?key|token|bearer|private[_\s]?key)\b"),
+    # Passwords / secrets — require assignment context to avoid false positives on code
+    (0.6, r"\b(?:password|passwd|secret|api[_\s]?key|bearer|private[_\s]?key)\b\s*[=:\"']"),
+    (0.5, r"\btoken\b\s*[=:\"']"),
     # Financial amounts with currency symbols
     (0.3, r"(?:₹|\$|€|£|¥)\s*[\d,]+(?:\.\d+)?"),
     # Salary / compensation patterns

@@ -2,6 +2,7 @@ import { useRef, useCallback } from 'react'
 import { Search, Sliders, Zap } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { searchApi } from '../api/client'
+import { sessionLogger } from '../utils/sessionLogger'
 
 export function SearchBar() {
   const {
@@ -16,12 +17,15 @@ export function SearchBar() {
   const runSearch = useCallback(async (q: string) => {
     if (!q.trim()) { setResults([]); return }
     setIsSearching(true)
+    sessionLogger.log('search', 'submit', { query: q, filters })
     try {
       const res = await searchApi.search(q, filters, 10)
       setResults(res.results)
       setQueryTimeMs(res.query_time_ms)
+      sessionLogger.log('search', 'results', { count: res.results.length, candidates: res.total_candidates }, res.query_time_ms)
     } catch {
       setResults([])
+      sessionLogger.log('search', 'error')
     } finally {
       setIsSearching(false)
     }

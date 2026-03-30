@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from api.routes import capture, config, search, ask, activity, insights
+from api.routes import capture, config, search, ask, activity, insights, logs as logs_route
 from api.middleware import auth as auth_middleware
 
 _CONFIG_PATH = Path(__file__).parent.parent / "config" / "config.yaml"
@@ -66,6 +66,28 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # ── Request-level logging middleware ─────────────────────────────────────
+    import time as _time
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.requests import Request as _StarletteReq
+    from starlette.responses import Response as _StarletteResp
+
+    _SKIP_LOG_PREFIXES = ("/api/health", "/thumbs/", "/assets/", "/api/logs")
+
+    class _RequestLogger(BaseHTTPMiddleware):
+        async def dispatch(self, request: _StarletteReq, call_next) -> _StarletteResp:
+            path = request.url.path
+            if any(path.startswith(p) for p in _SKIP_LOG_PREFIXES):
+                return await call_next(request)
+            t0 = _time.perf_counter()
+            response: _StarletteResp = await call_next(request)
+            ms = int((_time.perf_counter() - t0) * 1000)
+            logger.info(f"{request.method} {path} {response.status_code} {ms}ms")
+            return response
+
+    app.add_middleware(_RequestLogger)
+
+    # ── Routers ───────────────────────────────────────────────────────────────
     app.include_router(search.router,    prefix="/api")
     app.include_router(capture.router,   prefix="/api")
     app.include_router(config.router,    prefix="/api")
@@ -73,6 +95,7 @@ def create_app() -> FastAPI:
     app.include_router(activity.router,             prefix="/api")
     app.include_router(insights.router,             prefix="/api")
     app.include_router(auth_middleware.router,      prefix="/api")
+    app.include_router(logs_route.router,           prefix="/api")
 
     @app.get("/api/health")
     async def health():

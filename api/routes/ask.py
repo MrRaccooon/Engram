@@ -13,15 +13,20 @@ POST /api/ask          — run the full pipeline and call the frontier API.
 
 from __future__ import annotations
 
+import math
 import time
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from loguru import logger
+
 from pipeline import embedder, reranker
 from pipeline import intelligence
-from storage import vector_db
+from pipeline.context_parser import parse_window
+from storage import vector_db, metadata_db
 
 router = APIRouter(tags=["ask"])
 
@@ -61,12 +66,41 @@ class AskResponse(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _apply_recency(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Boost recent captures — personal memory queries favour recency."""
+    now = datetime.now(timezone.utc)
+    for c in candidates:
+        try:
+            ts_str = c.get("timestamp", "")
+            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            hours_ago = max((now - ts).total_seconds() / 3600, 0)
+            decay = math.exp(-hours_ago / 168)  # half-weight at ~1 week
+            base = c.get("rerank_score", c.get("score", 0))
+            c["rerank_score"] = base * (0.7 + 0.3 * decay)
+        except Exception:
+            pass
+    candidates.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
+    return candidates
+
+
+def _remove_self_refs(candidates: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+    """Remove clipboard entries whose content IS the query (self-reference loop)."""
+    q_norm = query.lower().strip()[:100]
+    return [
+        c for c in candidates
+        if not (
+            c.get("source_type") == "clipboard"
+            and (c.get("content_preview") or "").lower().strip()[:100] == q_norm
+        )
+    ]
+
+
 def _retrieve_candidates(
     query: str,
     top_k: int,
     filters: AskFilters,
 ) -> list[dict[str, Any]]:
-    """Dual vector retrieval — same logic as the search route."""
+    """Dual vector retrieval + recency weighting + self-ref cleanup."""
     retrieval_top_k = min(top_k * 5, 50)
 
     where: Optional[dict] = None
@@ -109,7 +143,84 @@ def _retrieve_candidates(
         text_field="content_preview",
     )
 
+    reranked = _remove_self_refs(reranked, query)
+    reranked = _apply_recency(reranked)
+
     return reranked
+
+
+# ── Session context builder ───────────────────────────────────────────────────
+
+def _build_session_context() -> str:
+    """
+    Assemble a short natural-language description of what the user has been
+    doing recently. Injected into the Ask system prompt so the AI knows the
+    user's current focus without needing to retrieve it from the vector store.
+    """
+    try:
+        lines: list[str] = []
+
+        # Last 60 minutes of activity
+        recent = metadata_db.fetch_recent_captures(minutes=60, limit=30)
+        if recent:
+            # Parse each window title to extract project / file signals
+            projects: dict[str, int] = {}
+            files: dict[str, int] = {}
+            activities: list[str] = []
+
+            for row in recent:
+                wt = row["window_title"] or ""
+                app = row["app_name"] or ""
+                ctx = parse_window(wt, app)
+                if ctx.get("project"):
+                    projects[ctx["project"]] = projects.get(ctx["project"], 0) + 1
+                if ctx.get("file"):
+                    files[ctx["file"]] = files.get(ctx["file"], 0) + 1
+                if ctx.get("rich_text"):
+                    activities.append(ctx["rich_text"])
+
+            # Top project and file
+            if projects:
+                top_proj = max(projects, key=lambda k: projects[k])
+                lines.append(f"Current project: {top_proj}")
+            if files:
+                top_files = sorted(files, key=lambda k: files[k], reverse=True)[:3]
+                lines.append(f"Recently edited: {', '.join(top_files)}")
+
+            # Deduplicated activity sample (last 5 unique)
+            seen: set[str] = set()
+            unique_acts: list[str] = []
+            for act in activities:
+                if act not in seen:
+                    seen.add(act)
+                    unique_acts.append(act)
+            if unique_acts:
+                lines.append("Recent activity: " + " → ".join(unique_acts[:5]))
+
+        # Top apps over last 6 hours
+        top_apps = metadata_db.fetch_top_apps(hours=6, limit=3)
+        if top_apps:
+            app_names = [r["app_name"].replace(".exe", "") for r in top_apps if r["app_name"]]
+            if app_names:
+                lines.append(f"Primary tools today: {', '.join(app_names)}")
+
+        # Recent consolidated insights (last 3 days)
+        insights = metadata_db.fetch_recent_insights(days=3)
+        if insights:
+            summaries = [r["summary"] for r in insights[:3] if r["summary"]]
+            if summaries:
+                lines.append("Recent session summaries:")
+                for s in summaries:
+                    lines.append(f"  • {s[:200]}")
+
+        if not lines:
+            return ""
+
+        return "\n".join(lines)
+
+    except Exception as exc:
+        logger.debug(f"Session context build failed: {exc}")
+        return ""
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -121,12 +232,17 @@ async def ask_preview(req: AskRequest) -> PreviewResponse:
     No external API call is made. Used by the frontend confirmation modal.
     """
     candidates = _retrieve_candidates(req.query, req.top_k, req.filters)
+    logger.info(f"Ask preview q={req.query!r} → {len(candidates)} candidates")
+
+    session_ctx = _build_session_context()
 
     try:
-        preview = intelligence.build_preview(req.query, candidates)
+        preview = intelligence.build_preview(req.query, candidates, session_context=session_ctx)
     except Exception as exc:
+        logger.error(f"Ask preview failed: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    logger.info(f"Ask preview done: passing={preview['passing_count']} blocked={preview['blocked_count']} tokens≈{preview['estimated_tokens']}")
     return PreviewResponse(**preview)
 
 
@@ -139,13 +255,17 @@ async def ask(req: AskRequest) -> AskResponse:
     t0 = time.perf_counter()
 
     candidates = _retrieve_candidates(req.query, req.top_k, req.filters)
+    session_ctx = _build_session_context()
+    logger.info(f"Ask q={req.query!r} deep={req.deep} → {len(candidates)} candidates | session_ctx={'yes' if session_ctx else 'none'}")
 
     try:
-        result = intelligence.ask(req.query, candidates, deep=req.deep)
+        result = intelligence.ask(req.query, candidates, deep=req.deep, session_context=session_ctx)
     except Exception as exc:
+        logger.error(f"Ask failed: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
 
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
+    logger.info(f"Ask done: model={result['model_used']} provider={result['provider']} in {elapsed_ms}ms")
 
     return AskResponse(
         answer=result["answer"],

@@ -33,6 +33,11 @@ capture:
     - ".py"
     - ".js"
     - ".ts"
+    - ".log"
+    - ".json"
+    - ".yaml"
+    - ".yml"
+    - ".csv"
 
 storage:
   # Root path for all Engram data (thumbnails, raw files, DBs)
@@ -59,7 +64,7 @@ embedding:
   # Number of items to embed in a single batch
   batch_size: 16
   # How often the cold-path worker processes the job queue (minutes)
-  worker_interval_minutes: 2
+  worker_interval_minutes: 1
   # Top-K candidates retrieved from vector DB before reranking
   retrieval_top_k: 50
   # Final top-N results returned to the frontend after reranking
@@ -109,9 +114,9 @@ intelligence:
   # Local Ollama model for pre-summarization before API call (set "" to skip)
   local_summarizer: ""
   # Chunks with sensitivity score >= this threshold are blocked from the API
-  sensitivity_threshold: 0.4
+  sensitivity_threshold: 0.65
   # Maximum tokens of context to send per API call
-  max_context_tokens: 800
+  max_context_tokens: 2000
   # Show user a preview of what will be sent before making the API call
   confirm_before_send: true
 
