@@ -18,8 +18,12 @@ from pathlib import Path
 
 import uvicorn
 import yaml
+from dotenv import load_dotenv
 from loguru import logger
 from pynput import keyboard
+
+# Load .env before anything else so API keys reach os.environ
+load_dotenv(Path(__file__).parent / ".env")
 
 logger.add("logs/engram_{time}.log", rotation="10 MB", retention="7 days", enqueue=True)
 
