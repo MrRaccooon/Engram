@@ -87,18 +87,69 @@ def _job_embedding_worker() -> None:
     process_batch()
 
 
-def _job_consolidation() -> None:
+def _job_consolidation(days_back: int = 1) -> None:
     from pipeline.consolidation_worker import run_consolidation
-    run_consolidation(days_back=1)
+    from daemon import state
+    run_consolidation(days_back=days_back)
+    state.record_run("consolidation")
 
 
 def _job_daily_digest() -> None:
     from daemon.tray import show_digest
+    from daemon import state
     show_digest()
+    state.record_run("daily_digest")
 
 
 # ── public API ────────────────────────────────────────────────────────────────
 _scheduler: BackgroundScheduler | None = None
+
+
+def _run_catchup_jobs(cfg: dict, storage_root: Path) -> None:
+    """
+    Run any scheduled jobs that were missed while the machine was off.
+    Called once at startup before the regular schedule begins.
+    Executes in a background thread so it doesn't block the scheduler start.
+    """
+    import threading
+    from daemon import state
+
+    cons_cfg = cfg.get("consolidation", {})
+    cons_hour: int = cons_cfg.get("run_hour", 2)
+    cons_minute: int = cons_cfg.get("run_minute", 0)
+
+    def _catchup() -> None:
+        # ── Consolidation catch-up ────────────────────────────────────────
+        # Calculate how many days of consolidation were missed.
+        # consolidation_worker already skips days that have insights,
+        # so passing a larger days_back is safe and idempotent.
+        days_missed = state.days_since_last_run("consolidation")
+
+        if days_missed is None:
+            # Never run before — consolidate up to last 7 days on first launch
+            catchup_days = 7
+            logger.info("Consolidation: first run, catching up on last 7 days")
+        elif days_missed >= 1:
+            # Machine was off — consolidate every day we missed
+            catchup_days = min(days_missed + 1, 30)  # cap at 30 days
+            logger.info(
+                f"Consolidation: machine was off for ~{days_missed} day(s), "
+                f"running catch-up for {catchup_days} days"
+            )
+        else:
+            catchup_days = 0
+
+        if catchup_days > 0:
+            _job_consolidation(days_back=catchup_days)
+
+        # ── Daily digest catch-up ─────────────────────────────────────────
+        # If it's past 8 AM and today's digest hasn't been shown, show it now.
+        if state.missed_today("daily_digest", run_hour=8):
+            logger.info("Daily digest: missed scheduled time, showing now")
+            _job_daily_digest()
+
+    t = threading.Thread(target=_catchup, daemon=True, name="engram-catchup")
+    t.start()
 
 
 def start() -> None:
@@ -106,6 +157,10 @@ def start() -> None:
 
     cfg = _load_config()
     storage_root = _init_storage(cfg)
+
+    # Init persistent state tracking
+    from daemon import state
+    state.init(storage_root)
 
     cap = cfg.get("capture", {})
     emb = cfg.get("embedding", {})
@@ -195,6 +250,9 @@ def start() -> None:
         f"clipboard every {clipboard_interval}s | "
         f"embed every {worker_interval_min}m"
     )
+
+    # Catch up on any jobs missed while the machine was off
+    _run_catchup_jobs(cfg, storage_root)
 
 
 def stop() -> None:
