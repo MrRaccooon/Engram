@@ -171,6 +171,32 @@ def _call_openai(system: str, user_prompt: str, model: str, api_key: str) -> str
     return response.choices[0].message.content or ""
 
 
+def _call_openrouter(system: str, user_prompt: str, model: str, api_key: str) -> str:
+    """
+    OpenRouter is OpenAI-compatible — same client, different base_url.
+    Supports every major model (Gemini, Claude, GPT, Llama, etc.)
+    at the cheapest available rates.
+    """
+    from openai import OpenAI
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://openrouter.ai/api/v1",
+        default_headers={
+            "HTTP-Referer": "https://github.com/MrRaccooon/Engram",
+            "X-Title": "Engram",
+        },
+    )
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_prompt},
+        ],
+        max_tokens=1024,
+    )
+    return response.choices[0].message.content or ""
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def build_preview(
@@ -266,8 +292,8 @@ def ask(
         }
 
     model = (
-        intel_cfg.get("api_model_deep", "claude-opus-4-5") if deep
-        else intel_cfg.get("api_model", "claude-haiku-4-5")
+        intel_cfg.get("api_model_deep", "google/gemini-2.0-flash") if deep
+        else intel_cfg.get("api_model", "google/gemini-2.0-flash-lite")
     )
 
     # Build the preview (runs sensitivity + masking + summarization)
@@ -307,6 +333,12 @@ def ask(
             if not api_key:
                 raise ValueError("OPENAI_API_KEY not set in environment")
             raw_answer = _call_openai(_SYSTEM_PROMPT, user_prompt, model, api_key)
+
+        elif provider == "openrouter":
+            api_key = os.environ.get("OPENROUTER_API_KEY", "")
+            if not api_key:
+                raise ValueError("OPENROUTER_API_KEY not set in environment")
+            raw_answer = _call_openrouter(_SYSTEM_PROMPT, user_prompt, model, api_key)
 
         else:
             raise ValueError(f"Unknown provider: {provider}")
