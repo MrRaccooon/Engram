@@ -12,9 +12,13 @@ Run with: python main.py
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from pathlib import Path
+
+# Prevent OpenMP duplicate-library crash (torch + easyocr both bundle it)
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import uvicorn
 import yaml

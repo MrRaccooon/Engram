@@ -63,6 +63,15 @@ def capture(storage_root: Path, thumbnail_size: int = 400) -> Optional[str]:
     # Optionally keep raw (caller decides via config; we always save thumb)
     raw_path: Optional[str] = None
 
+    # Run OCR on the full-resolution image while it's still in memory.
+    # The thumbnail (400px) is too small for reliable text extraction.
+    ocr_text = ""
+    try:
+        from pipeline.ocr import extract_from_pil
+        ocr_text = extract_from_pil(img)
+    except Exception as exc:
+        logger.debug(f"Screenshot OCR skipped: {exc}")
+
     # Active window context
     window_title, app_name = get_active_window()
 
@@ -71,6 +80,7 @@ def capture(storage_root: Path, thumbnail_size: int = 400) -> Optional[str]:
         timestamp=ts,
         thumb_path=str(thumb_path),
         raw_path=raw_path,
+        content=ocr_text,
         phash=str(current_phash),
         window_title=window_title,
         app_name=app_name,

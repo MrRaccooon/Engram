@@ -69,13 +69,15 @@ def _process_capture(row) -> None:
     url: str = row["url"] or ""
 
     # ── 1. Extract text ───────────────────────────────────────────────────────
+    # For screenshots, OCR is now done at capture time on the full-res image
+    # and stored in `content`. Only fall back to thumbnail OCR if content is empty.
     text = content
 
-    if source_type == "screenshot" and thumb_path:
+    if source_type == "screenshot" and not text.strip() and thumb_path:
         ocr_text = ocr.extract_from_image(thumb_path)
         if ocr_text:
             text = ocr_text
-        elif not text:
+        else:
             logger.debug(f"OCR yielded nothing for {capture_id[:8]}, skipping text embed")
 
     if not text.strip() and source_type != "screenshot":
