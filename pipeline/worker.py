@@ -25,7 +25,7 @@ from loguru import logger
 from pipeline import chunker, embedder
 from storage import metadata_db, vector_db
 
-_BATCH_SIZE = 32  # captures processed per worker invocation
+_BATCH_SIZE = 64  # captures processed per worker invocation
 
 # ── OCR post-processing helpers ───────────────────────────────────────────────
 
@@ -172,6 +172,17 @@ def _process_capture(row) -> None:
 
     if not text.strip() and source_type != "screenshot":
         logger.debug(f"No text content for {capture_id[:8]} ({source_type}), skipping text embed")
+
+    # ── 1b. Write enriched text back to SQLite so timeline/detail view works ─
+    if source_type == "screenshot" and text.strip():
+        try:
+            with metadata_db._connect() as conn:
+                conn.execute(
+                    "UPDATE captures SET content = ? WHERE id = ?",
+                    (text[:4000], capture_id),
+                )
+        except Exception as exc:
+            logger.debug(f"Content writeback skipped for {capture_id[:8]}: {exc}")
 
     # ── 2. Chunk + text embed ─────────────────────────────────────────────────
     if text.strip():

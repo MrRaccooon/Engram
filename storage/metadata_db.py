@@ -172,16 +172,32 @@ def increment_attempts(capture_id: str) -> None:
 
 # ── Read helpers ──────────────────────────────────────────────────────────────
 
-def fetch_pending_jobs(limit: int = 32) -> list[sqlite3.Row]:
-    """Return up to `limit` pending job rows joined with their capture metadata."""
+def fetch_pending_jobs(limit: int = 64) -> list[sqlite3.Row]:
+    """
+    Return up to `limit` pending job rows joined with their capture metadata.
+
+    Priority order — screenshots and files first (time-sensitive context),
+    then clipboard, then URL/browser history (historical, can wait):
+      1. screenshot
+      2. file
+      3. clipboard
+      4. url / audio / other
+    Within each priority tier, ordered by creation time (oldest first).
+    """
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT c.*, jq.attempts, jq.created_at AS queued_at
+            SELECT c.*, jq.attempts, jq.created_at AS queued_at,
+                   CASE c.source_type
+                       WHEN 'screenshot' THEN 1
+                       WHEN 'file'       THEN 2
+                       WHEN 'clipboard'  THEN 3
+                       ELSE 4
+                   END AS priority
             FROM job_queue jq
             JOIN captures c ON c.id = jq.capture_id
             WHERE c.status = 'pending' AND jq.attempts < 3
-            ORDER BY jq.created_at ASC
+            ORDER BY priority ASC, jq.created_at ASC
             LIMIT ?
             """,
             (limit,),
@@ -371,14 +387,22 @@ def fetch_captures_by_tag(tag: str, limit: int = 20) -> list[sqlite3.Row]:
 # ── Session context helpers ────────────────────────────────────────────────────
 
 def fetch_recent_captures(minutes: int = 60, limit: int = 40) -> list[sqlite3.Row]:
-    """Return the last N captures from the past `minutes` minutes."""
+    """
+    Return the last N captures from the past `minutes` minutes.
+    Includes both indexed and pending captures so the session context
+    is available immediately, not only after the worker drains the queue.
+    Excludes URL captures (browser history) since those are historical,
+    not indicative of the current session.
+    """
     from datetime import timedelta
     cutoff = (datetime.utcnow() - timedelta(minutes=minutes)).isoformat()
     with _connect() as conn:
         return conn.execute(
             """
             SELECT * FROM captures
-            WHERE timestamp >= ? AND status = 'indexed'
+            WHERE timestamp >= ?
+              AND status IN ('indexed', 'pending')
+              AND source_type != 'url'
             ORDER BY timestamp DESC
             LIMIT ?
             """,

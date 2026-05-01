@@ -67,7 +67,11 @@ class AskResponse(BaseModel):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _apply_recency(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Boost recent captures — personal memory queries favour recency."""
+    """
+    Boost recent captures and penalise browser URL history.
+    Screenshots and file captures are much stronger signals for 'what am I
+    doing right now' than a browser history entry from 3 weeks ago.
+    """
     now = datetime.now(timezone.utc)
     for c in candidates:
         try:
@@ -76,7 +80,14 @@ def _apply_recency(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
             hours_ago = max((now - ts).total_seconds() / 3600, 0)
             decay = math.exp(-hours_ago / 168)  # half-weight at ~1 week
             base = c.get("rerank_score", c.get("score", 0))
-            c["rerank_score"] = base * (0.7 + 0.3 * decay)
+            score = base * (0.7 + 0.3 * decay)
+
+            # URL/browser-history entries get a 40% penalty — they're
+            # historical context, not live session signal
+            if c.get("source_type") == "url":
+                score *= 0.6
+
+            c["rerank_score"] = score
         except Exception:
             pass
     candidates.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
