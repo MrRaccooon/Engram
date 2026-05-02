@@ -20,6 +20,36 @@ from loguru import logger
 _DB_PATH: Optional[Path] = None
 
 
+_MIGRATIONS = [
+    ("narrative",          "ALTER TABLE insights ADD COLUMN narrative TEXT"),
+    ("topics_structured",  "ALTER TABLE insights ADD COLUMN topics_structured TEXT"),
+    ("projects",           "ALTER TABLE insights ADD COLUMN projects TEXT"),
+    ("files_touched",      "ALTER TABLE insights ADD COLUMN files_touched TEXT"),
+    ("decisions",          "ALTER TABLE insights ADD COLUMN decisions TEXT"),
+    ("problems",           "ALTER TABLE insights ADD COLUMN problems TEXT"),
+    ("outcomes",           "ALTER TABLE insights ADD COLUMN outcomes TEXT"),
+    ("consolidation_type", "ALTER TABLE insights ADD COLUMN consolidation_type TEXT NOT NULL DEFAULT 'daily'"),
+]
+
+
+def _run_migrations(conn: sqlite3.Connection) -> None:
+    """Add new columns to existing tables if they're missing."""
+    try:
+        existing = {
+            row[1] for row in conn.execute("PRAGMA table_info(insights)").fetchall()
+        }
+    except Exception:
+        return
+
+    for col_name, sql in _MIGRATIONS:
+        if col_name not in existing:
+            try:
+                conn.execute(sql)
+                logger.debug(f"Migration: added column insights.{col_name}")
+            except Exception:
+                pass
+
+
 def init(db_path: Path) -> None:
     """Create tables if they don't exist. Call once at startup."""
     global _DB_PATH
@@ -27,6 +57,7 @@ def init(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with _connect() as conn:
         conn.executescript(_SCHEMA_SQL)
+        _run_migrations(conn)
     logger.info(f"SQLite metadata DB ready at {db_path}")
 
 
@@ -78,16 +109,41 @@ CREATE INDEX IF NOT EXISTS idx_job_queue_capture_id ON job_queue(capture_id);
 
 -- Phase 2: Nightly consolidation insights
 CREATE TABLE IF NOT EXISTS insights (
-    id               TEXT PRIMARY KEY,
-    date             TEXT NOT NULL,
-    session_start    TEXT NOT NULL,
-    session_end      TEXT NOT NULL,
-    summary          TEXT NOT NULL,
-    topics           TEXT,
-    consolidated_at  TEXT NOT NULL
+    id                  TEXT PRIMARY KEY,
+    date                TEXT NOT NULL,
+    session_start       TEXT NOT NULL,
+    session_end         TEXT NOT NULL,
+    summary             TEXT NOT NULL,
+    topics              TEXT,
+    consolidated_at     TEXT NOT NULL,
+    narrative           TEXT,
+    topics_structured   TEXT,
+    projects            TEXT,
+    files_touched       TEXT,
+    decisions           TEXT,
+    problems            TEXT,
+    outcomes            TEXT,
+    consolidation_type  TEXT NOT NULL DEFAULT 'daily'
 );
 
 CREATE INDEX IF NOT EXISTS idx_insights_date ON insights(date);
+CREATE INDEX IF NOT EXISTS idx_insights_type ON insights(consolidation_type);
+
+-- Topic threads: accumulated knowledge across sessions
+CREATE TABLE IF NOT EXISTS topic_threads (
+    id              TEXT PRIMARY KEY,
+    topic           TEXT NOT NULL UNIQUE,
+    summary         TEXT NOT NULL DEFAULT '',
+    total_sessions  INTEGER NOT NULL DEFAULT 0,
+    total_minutes   REAL NOT NULL DEFAULT 0,
+    projects        TEXT,
+    files_touched   TEXT,
+    decisions       TEXT,
+    last_updated    TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_topic_threads_topic ON topic_threads(topic);
 
 -- Phase 3: Semantic knowledge graph
 CREATE TABLE IF NOT EXISTS capture_edges (
@@ -278,6 +334,14 @@ def insert_insight(
     session_end: str,
     summary: str,
     topics: Optional[str] = None,
+    narrative: Optional[str] = None,
+    topics_structured: Optional[str] = None,
+    projects: Optional[str] = None,
+    files_touched: Optional[str] = None,
+    decisions: Optional[str] = None,
+    problems: Optional[str] = None,
+    outcomes: Optional[str] = None,
+    consolidation_type: str = "daily",
 ) -> None:
     """Insert a consolidated insight summary."""
     consolidated_at = datetime.utcnow().isoformat()
@@ -285,10 +349,14 @@ def insert_insight(
         conn.execute(
             """
             INSERT OR REPLACE INTO insights
-                (id, date, session_start, session_end, summary, topics, consolidated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (id, date, session_start, session_end, summary, topics,
+                 consolidated_at, narrative, topics_structured, projects,
+                 files_touched, decisions, problems, outcomes, consolidation_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (insight_id, date, session_start, session_end, summary, topics, consolidated_at),
+            (insight_id, date, session_start, session_end, summary, topics,
+             consolidated_at, narrative, topics_structured, projects,
+             files_touched, decisions, problems, outcomes, consolidation_type),
         )
 
 
@@ -317,10 +385,11 @@ def fetch_latest_insight() -> Optional[sqlite3.Row]:
         ).fetchone()
 
 
-def has_insight_for_day(date_str: str) -> bool:
+def has_insight_for_day(date_str: str, consolidation_type: str = "daily") -> bool:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT 1 FROM insights WHERE date = ? LIMIT 1", (date_str,)
+            "SELECT 1 FROM insights WHERE date = ? AND consolidation_type = ? LIMIT 1",
+            (date_str, consolidation_type),
         ).fetchone()
     return row is not None
 
@@ -412,6 +481,79 @@ def fetch_distinct_tags(limit: int = 500) -> list[str]:
             (limit,),
         ).fetchall()
     return [r["tag"] for r in rows]
+
+
+# ── Topic threads ──────────────────────────────────────────────────────────────
+
+def upsert_topic_thread(
+    *,
+    topic: str,
+    summary: str,
+    session_count_delta: int = 1,
+    minutes_delta: float = 0,
+    projects: Optional[str] = None,
+    files_touched: Optional[str] = None,
+    decisions: Optional[str] = None,
+) -> str:
+    """Create or update a topic thread. Returns the thread ID."""
+    now = datetime.utcnow().isoformat()
+    with _connect() as conn:
+        existing = conn.execute(
+            "SELECT id, total_sessions, total_minutes FROM topic_threads WHERE topic = ?",
+            (topic,),
+        ).fetchone()
+
+        if existing:
+            thread_id = existing["id"]
+            conn.execute(
+                """
+                UPDATE topic_threads
+                SET summary = ?, total_sessions = total_sessions + ?,
+                    total_minutes = total_minutes + ?, projects = COALESCE(?, projects),
+                    files_touched = COALESCE(?, files_touched),
+                    decisions = COALESCE(?, decisions), last_updated = ?
+                WHERE id = ?
+                """,
+                (summary, session_count_delta, minutes_delta,
+                 projects, files_touched, decisions, now, thread_id),
+            )
+        else:
+            thread_id = str(uuid.uuid4())
+            conn.execute(
+                """
+                INSERT INTO topic_threads
+                    (id, topic, summary, total_sessions, total_minutes,
+                     projects, files_touched, decisions, last_updated, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (thread_id, topic, summary, session_count_delta, minutes_delta,
+                 projects, files_touched, decisions, now, now),
+            )
+    return thread_id
+
+
+def fetch_topic_thread(topic: str) -> Optional[sqlite3.Row]:
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT * FROM topic_threads WHERE topic = ?", (topic,),
+        ).fetchone()
+
+
+def fetch_all_topic_threads() -> list[sqlite3.Row]:
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT * FROM topic_threads ORDER BY last_updated DESC",
+        ).fetchall()
+
+
+def count_topic_occurrences(topic: str) -> int:
+    """Count how many insights mention this topic."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM insights WHERE topics_structured LIKE ?",
+            (f"%{topic}%",),
+        ).fetchone()
+    return row[0] if row else 0
 
 
 # ── Session context helpers ────────────────────────────────────────────────────

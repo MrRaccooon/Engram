@@ -119,6 +119,18 @@ def _job_consolidation(days_back: int = 1) -> None:
     state.record_run("consolidation")
 
 
+def _job_micro_consolidation() -> None:
+    from pipeline.consolidation_worker import run_micro_consolidation
+    run_micro_consolidation()
+
+
+def _job_weekly_rollup() -> None:
+    from pipeline.consolidation_worker import run_weekly_rollup
+    from daemon import state
+    run_weekly_rollup()
+    state.record_run("weekly_rollup")
+
+
 def _job_daily_digest() -> None:
     from daemon.tray import show_digest
     from daemon import state
@@ -248,6 +260,28 @@ def start() -> None:
         hour=cons_hour,
         minute=cons_minute,
         id="consolidation",
+        max_instances=1,
+        coalesce=True,
+    )
+
+    # Micro-consolidation every 2 hours during active use
+    _scheduler.add_job(
+        _job_micro_consolidation,
+        trigger="interval",
+        hours=2,
+        id="micro_consolidation",
+        max_instances=1,
+        coalesce=True,
+    )
+
+    # Weekly rollup on Sundays at 3 AM
+    _scheduler.add_job(
+        _job_weekly_rollup,
+        trigger="cron",
+        day_of_week="sun",
+        hour=3,
+        minute=0,
+        id="weekly_rollup",
         max_instances=1,
         coalesce=True,
     )
