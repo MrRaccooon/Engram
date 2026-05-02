@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import time
+import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -208,10 +209,10 @@ def _retrieve_candidates(
     query: str,
     top_k: int,
     filters: AskFilters,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     """
     Multi-source retrieval with RRF fusion.
-    Returns (candidates, insights).
+    Returns (candidates, insights, sources_used).
     """
     known_tags = []
     try:
@@ -237,7 +238,8 @@ def _retrieve_candidates(
         visual_results = vector_db.query_visual(
             visual_vec, top_k=retrieval_top_k // 2, where=where,
         )
-        ranked_lists["visual"] = visual_results
+        if visual_results:
+            ranked_lists["visual"] = visual_results
 
     # 3) Insights vector search (always)
     insights = _retrieve_insights(text_vec, top_k=5)
@@ -254,7 +256,8 @@ def _retrieve_candidates(
                 d = dict(row)
                 d["capture_id"] = d["id"]
                 temporal_results.append(d)
-            ranked_lists["temporal"] = temporal_results
+            if temporal_results:
+                ranked_lists["temporal"] = temporal_results
         except Exception as exc:
             logger.debug(f"Temporal retrieval failed: {exc}")
 
@@ -271,28 +274,37 @@ def _retrieve_candidates(
                     if d["id"] not in seen_ids:
                         seen_ids.add(d["id"])
                         tag_results.append(d)
-            ranked_lists["tags"] = tag_results
+            if tag_results:
+                ranked_lists["tags"] = tag_results
         except Exception as exc:
             logger.debug(f"Tag retrieval failed: {exc}")
+
+    sources_used = list(ranked_lists.keys())
+    if insights:
+        sources_used.append("insights")
 
     # Fuse all sources
     fused = _rrf_fuse(ranked_lists)
 
-    # Rerank top candidates with cross-encoder
+    # Enrich with full content BEFORE reranking so the cross-encoder
+    # scores on real text, not 300-char previews
     rerank_pool = fused[:top_k * 3]
+    rerank_pool = _enrich_with_full_content(rerank_pool)
+
+    # Ensure every candidate has a "content" field for the reranker;
+    # fall back to content_preview for items that SQLite enrichment missed
     for item in rerank_pool:
-        if not item.get("content_preview"):
-            item["content_preview"] = (item.get("content") or "")[:300]
+        if not item.get("content"):
+            item["content"] = item.get("content_preview") or ""
 
     reranked = reranker.rerank(
         query=query,
         candidates=rerank_pool,
         top_n=top_k,
-        text_field="content_preview",
+        text_field="content",
     )
 
     reranked = _remove_self_refs(reranked, query)
-    reranked = _enrich_with_full_content(reranked)
     reranked = _apply_recency(reranked)
 
     # 6) Graph walk on top 3 results for context expansion
@@ -315,10 +327,11 @@ def _retrieve_candidates(
             if graph_additions:
                 graph_additions = _enrich_with_full_content(graph_additions)
                 reranked.extend(graph_additions[:3])
+                sources_used.append("graph")
         except Exception as exc:
             logger.debug(f"Graph expansion failed: {exc}")
 
-    return reranked, insights
+    return reranked, insights, sources_used
 
 
 # ── Session context builder ───────────────────────────────────────────────────
@@ -403,7 +416,7 @@ async def ask_preview(req: AskRequest) -> PreviewResponse:
     Build the masked prompt that would be sent to the API.
     No external API call is made. Used by the frontend confirmation modal.
     """
-    candidates, insights = _retrieve_candidates(req.query, req.top_k, req.filters)
+    candidates, insights, _sources = _retrieve_candidates(req.query, req.top_k, req.filters)
     logger.info(f"Ask preview q={req.query!r} → {len(candidates)} candidates, {len(insights)} insights")
 
     session_ctx = _build_session_context()
@@ -426,14 +439,14 @@ async def ask(req: AskRequest) -> AskResponse:
     Run the full privacy pipeline and call the configured frontier API.
     Returns the synthesized answer with real entity names restored.
     """
-    import uuid as _uuid
     t0 = time.perf_counter()
 
-    candidates, insights = _retrieve_candidates(req.query, req.top_k, req.filters)
+    candidates, insights, sources_used = _retrieve_candidates(req.query, req.top_k, req.filters)
     session_ctx = _build_session_context()
     logger.info(
         f"Ask q={req.query!r} deep={req.deep} → {len(candidates)} candidates, "
-        f"{len(insights)} insights | session_ctx={'yes' if session_ctx else 'none'}"
+        f"{len(insights)} insights | sources={sources_used} | "
+        f"session_ctx={'yes' if session_ctx else 'none'}"
     )
 
     try:
@@ -451,16 +464,12 @@ async def ask(req: AskRequest) -> AskResponse:
     query_id = str(_uuid.uuid4())
     try:
         parsed = parse_query(req.query)
-        sources = ",".join(
-            s for s in ["text", "visual", "insights", "temporal", "tags", "graph"]
-            if len(candidates) > 0
-        )
         metadata_db.insert_eval_log(
             query_id=query_id,
             query=req.query,
             intent=parsed.intent,
             candidate_count=len(candidates),
-            sources_used=sources,
+            sources_used=",".join(sources_used),
             model_used=result.get("model_used", ""),
             latency_ms=elapsed_ms,
         )

@@ -433,16 +433,7 @@ def run_micro_consolidation() -> None:
     today_str = now.date().isoformat()
 
     try:
-        from storage import metadata_db as mdb
-        with mdb._connect() as conn:
-            recent = conn.execute(
-                """
-                SELECT * FROM captures
-                WHERE timestamp >= ? AND status = 'indexed'
-                ORDER BY timestamp ASC
-                """,
-                (cutoff,),
-            ).fetchall()
+        recent = metadata_db.fetch_recent_indexed_captures(cutoff, limit=200)
     except Exception as exc:
         logger.debug(f"Micro-consolidation: fetch failed: {exc}")
         return

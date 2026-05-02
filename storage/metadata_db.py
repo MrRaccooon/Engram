@@ -486,6 +486,20 @@ def fetch_captures_in_range(
         ).fetchall()
 
 
+def fetch_recent_indexed_captures(since_iso: str, limit: int = 200) -> list[sqlite3.Row]:
+    """Return indexed captures since a given timestamp, chronologically."""
+    with _connect() as conn:
+        return conn.execute(
+            """
+            SELECT * FROM captures
+            WHERE timestamp >= ? AND status = 'indexed'
+            ORDER BY timestamp ASC
+            LIMIT ?
+            """,
+            (since_iso, limit),
+        ).fetchall()
+
+
 def fetch_distinct_tags(limit: int = 500) -> list[str]:
     """Return the most common tags across all captures."""
     with _connect() as conn:

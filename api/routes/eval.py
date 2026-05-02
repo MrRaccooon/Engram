@@ -13,7 +13,6 @@ GET  /api/eval/log       — Return recent eval log entries for inspection.
 
 from __future__ import annotations
 
-import json
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -67,22 +66,24 @@ async def get_metrics(
     if not rows:
         return {"days": days, "total_queries": 0, "metrics": {}}
 
-    total = len(rows)
-    rated = [r for r in rows if r["feedback_rating"] is not None]
-    positive = sum(1 for r in rated if r["feedback_rating"] > 0)
-    negative = sum(1 for r in rated if r["feedback_rating"] < 0)
+    entries = [dict(r) for r in rows]
 
-    latencies = [r["latency_ms"] for r in rows if r["latency_ms"] is not None]
+    total = len(entries)
+    rated = [e for e in entries if e["feedback_rating"] is not None]
+    positive = sum(1 for e in rated if e["feedback_rating"] > 0)
+    negative = sum(1 for e in rated if e["feedback_rating"] < 0)
+
+    latencies = [e["latency_ms"] for e in entries if e["latency_ms"] is not None]
     avg_latency = round(sum(latencies) / len(latencies)) if latencies else 0
     p95_latency = _percentile(latencies, 95) if latencies else 0
 
-    candidate_counts = [r["candidate_count"] for r in rows if r["candidate_count"] is not None]
+    candidate_counts = [e["candidate_count"] for e in entries if e["candidate_count"] is not None]
     avg_candidates = round(sum(candidate_counts) / len(candidate_counts), 1) if candidate_counts else 0
 
     # Source usage distribution
     source_counts: dict[str, int] = {}
-    for r in rows:
-        sources = r.get("sources_used") or ""
+    for e in entries:
+        sources = e.get("sources_used") or ""
         for src in sources.split(","):
             src = src.strip()
             if src:
@@ -90,14 +91,14 @@ async def get_metrics(
 
     # Per-intent breakdown
     intent_stats: dict[str, dict[str, int]] = {}
-    for r in rows:
-        intent = r.get("intent") or "unknown"
+    for e in entries:
+        intent = e.get("intent") or "unknown"
         if intent not in intent_stats:
             intent_stats[intent] = {"total": 0, "rated": 0, "positive": 0}
         intent_stats[intent]["total"] += 1
-        if r["feedback_rating"] is not None:
+        if e["feedback_rating"] is not None:
             intent_stats[intent]["rated"] += 1
-            if r["feedback_rating"] > 0:
+            if e["feedback_rating"] > 0:
                 intent_stats[intent]["positive"] += 1
 
     metrics = {
@@ -127,21 +128,7 @@ async def get_eval_log(
         logger.error(f"Eval log fetch failed: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
 
-    entries = []
-    for r in rows:
-        entries.append({
-            "id": r["id"],
-            "query": r["query"],
-            "intent": r.get("intent"),
-            "candidate_count": r.get("candidate_count"),
-            "sources_used": r.get("sources_used"),
-            "model_used": r.get("model_used"),
-            "latency_ms": r.get("latency_ms"),
-            "feedback_rating": r.get("feedback_rating"),
-            "feedback_note": r.get("feedback_note"),
-            "created_at": r.get("created_at"),
-        })
-
+    entries = [dict(r) for r in rows]
     return {"entries": entries, "count": len(entries), "offset": offset}
 
 
