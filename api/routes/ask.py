@@ -63,6 +63,7 @@ class AskResponse(BaseModel):
     model_used: str
     provider: str
     query_time_ms: int
+    query_id: str = ""
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -425,6 +426,7 @@ async def ask(req: AskRequest) -> AskResponse:
     Run the full privacy pipeline and call the configured frontier API.
     Returns the synthesized answer with real entity names restored.
     """
+    import uuid as _uuid
     t0 = time.perf_counter()
 
     candidates, insights = _retrieve_candidates(req.query, req.top_k, req.filters)
@@ -446,6 +448,25 @@ async def ask(req: AskRequest) -> AskResponse:
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
     logger.info(f"Ask done: model={result['model_used']} provider={result['provider']} in {elapsed_ms}ms")
 
+    query_id = str(_uuid.uuid4())
+    try:
+        parsed = parse_query(req.query)
+        sources = ",".join(
+            s for s in ["text", "visual", "insights", "temporal", "tags", "graph"]
+            if len(candidates) > 0
+        )
+        metadata_db.insert_eval_log(
+            query_id=query_id,
+            query=req.query,
+            intent=parsed.intent,
+            candidate_count=len(candidates),
+            sources_used=sources,
+            model_used=result.get("model_used", ""),
+            latency_ms=elapsed_ms,
+        )
+    except Exception as exc:
+        logger.debug(f"Eval log insert failed (non-fatal): {exc}")
+
     return AskResponse(
         answer=result["answer"],
         blocked_count=result["blocked_count"],
@@ -453,4 +474,5 @@ async def ask(req: AskRequest) -> AskResponse:
         model_used=result["model_used"],
         provider=result["provider"],
         query_time_ms=elapsed_ms,
+        query_id=query_id,
     )

@@ -166,6 +166,22 @@ CREATE TABLE IF NOT EXISTS capture_tags (
 
 CREATE INDEX IF NOT EXISTS idx_tags_capture ON capture_tags(capture_id);
 CREATE INDEX IF NOT EXISTS idx_tags_tag     ON capture_tags(tag);
+
+-- Phase 4: Evaluation log
+CREATE TABLE IF NOT EXISTS eval_log (
+    id               TEXT PRIMARY KEY,
+    query            TEXT NOT NULL,
+    intent           TEXT,
+    candidate_count  INTEGER,
+    sources_used     TEXT,
+    model_used       TEXT,
+    latency_ms       INTEGER,
+    feedback_rating  INTEGER,
+    feedback_note    TEXT,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_eval_log_created ON eval_log(created_at);
 """
 
 
@@ -615,4 +631,54 @@ def fetch_top_window_titles(hours: int = 4, limit: int = 8) -> list[sqlite3.Row]
             LIMIT ?
             """,
             (cutoff, limit),
+        ).fetchall()
+
+
+# ── Eval log helpers ──────────────────────────────────────────────────────────
+
+def insert_eval_log(
+    *,
+    query_id: str,
+    query: str,
+    intent: str | None = None,
+    candidate_count: int | None = None,
+    sources_used: str | None = None,
+    model_used: str | None = None,
+    latency_ms: int | None = None,
+) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO eval_log (id, query, intent, candidate_count,
+                                  sources_used, model_used, latency_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (query_id, query, intent, candidate_count,
+             sources_used, model_used, latency_ms),
+        )
+
+
+def update_eval_feedback(query_id: str, rating: int, note: str | None = None) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE eval_log SET feedback_rating = ?, feedback_note = ? WHERE id = ?",
+            (rating, note, query_id),
+        )
+
+
+def fetch_eval_logs(days: int = 7) -> list[sqlite3.Row]:
+    from datetime import timedelta
+    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT * FROM eval_log WHERE created_at >= ? ORDER BY created_at DESC",
+            (cutoff,),
+        ).fetchall()
+
+
+def fetch_eval_logs_paginated(limit: int = 50, offset: int = 0) -> list[sqlite3.Row]:
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT * FROM eval_log ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
         ).fetchall()
