@@ -26,7 +26,8 @@ from loguru import logger
 from pipeline import embedder, reranker
 from pipeline import intelligence
 from pipeline.context_parser import parse_window
-from storage import vector_db, metadata_db
+from pipeline.query_engine import parse_query, ParsedQuery
+from storage import vector_db, metadata_db, graph_db
 
 router = APIRouter(tags=["ask"])
 
@@ -106,14 +107,18 @@ def _remove_self_refs(candidates: list[dict[str, Any]], query: str) -> list[dict
     ]
 
 
-def _build_chroma_where(filters: AskFilters) -> Optional[dict]:
+def _build_chroma_where(filters: AskFilters, pq: ParsedQuery | None = None) -> Optional[dict]:
     conditions = []
     if filters.source_types:
         conditions.append({"source_type": {"$in": filters.source_types}})
-    if filters.date_from:
-        conditions.append({"timestamp": {"$gte": filters.date_from}})
-    if filters.date_to:
-        conditions.append({"timestamp": {"$lte": filters.date_to + "T23:59:59"}})
+
+    date_from = filters.date_from or (pq.date_from if pq else None)
+    date_to = filters.date_to or (pq.date_to if pq else None)
+
+    if date_from:
+        conditions.append({"timestamp": {"$gte": date_from}})
+    if date_to:
+        conditions.append({"timestamp": {"$lte": date_to + "T23:59:59"}})
     if len(conditions) == 1:
         return conditions[0]
     elif len(conditions) > 1:
@@ -138,12 +143,64 @@ def _enrich_with_full_content(candidates: list[dict[str, Any]]) -> list[dict[str
 
 
 def _retrieve_insights(query_vec: list[float], top_k: int = 5) -> list[dict[str, Any]]:
-    """Retrieve consolidated session summaries from the insights vector collection."""
     try:
         return vector_db.query_insights(query_vec, top_k=top_k)
     except Exception as exc:
         logger.debug(f"Insights retrieval failed: {exc}")
         return []
+
+
+# ── Source-weighted Reciprocal Rank Fusion ─────────────────────────────────────
+
+_RRF_K = 60  # standard RRF constant
+
+_SOURCE_WEIGHTS = {
+    "text":     1.0,
+    "visual":   0.8,
+    "insights": 1.5,
+    "temporal": 2.0,
+    "tags":     1.3,
+    "graph":    0.7,
+}
+
+
+def _rrf_fuse(
+    ranked_lists: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """
+    Fuse multiple ranked lists into one using source-weighted RRF.
+    All lists are keyed by capture_id for dedup.
+    """
+    scores: dict[str, float] = {}
+    items: dict[str, dict[str, Any]] = {}
+
+    for source, results in ranked_lists.items():
+        weight = _SOURCE_WEIGHTS.get(source, 1.0)
+        for rank, item in enumerate(results):
+            cid = item.get("capture_id") or item.get("id", "")
+            if not cid:
+                continue
+            scores[cid] = scores.get(cid, 0) + weight / (_RRF_K + rank)
+            if cid not in items:
+                items[cid] = item
+
+    sorted_ids = sorted(scores, key=lambda k: scores[k], reverse=True)
+    fused = []
+    for cid in sorted_ids:
+        entry = items[cid]
+        entry["rrf_score"] = scores[cid]
+        fused.append(entry)
+    return fused
+
+
+def _dedupe_chunks_to_captures(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse multiple chunks from the same capture to the best-scoring one."""
+    seen: dict[str, dict[str, Any]] = {}
+    for r in results:
+        cid = r.get("capture_id", r.get("id", ""))
+        if cid not in seen:
+            seen[cid] = r
+    return list(seen.values())
 
 
 def _retrieve_candidates(
@@ -152,37 +209,83 @@ def _retrieve_candidates(
     filters: AskFilters,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
-    Dual vector retrieval + insights retrieval + full content enrichment.
+    Multi-source retrieval with RRF fusion.
     Returns (candidates, insights).
     """
-    retrieval_top_k = min(top_k * 5, 50)
-    where = _build_chroma_where(filters)
+    known_tags = []
+    try:
+        known_tags = metadata_db.fetch_distinct_tags(limit=300)
+    except Exception:
+        pass
 
+    pq = parse_query(query, known_tags=known_tags)
+    retrieval_top_k = min(top_k * 5, 50)
+    where = _build_chroma_where(filters, pq)
+
+    ranked_lists: dict[str, list[dict[str, Any]]] = {}
+
+    # 1) Text vector search (always)
     text_vec = embedder.embed_text(query)
     text_results = vector_db.query_text(text_vec, top_k=retrieval_top_k, where=where)
+    text_deduped = _dedupe_chunks_to_captures(text_results)
+    ranked_lists["text"] = text_deduped
 
-    insights = _retrieve_insights(text_vec, top_k=5)
-
+    # 2) Visual vector search (always)
     visual_vec = embedder.embed_query_text_clip(query)
-    visual_results: list[dict[str, Any]] = []
     if visual_vec:
         visual_results = vector_db.query_visual(
-            visual_vec, top_k=retrieval_top_k // 2, where=where
+            visual_vec, top_k=retrieval_top_k // 2, where=where,
         )
+        ranked_lists["visual"] = visual_results
 
-    merged: dict[str, dict] = {}
-    for r in text_results:
-        merged[r["id"]] = r
-    for r in visual_results:
-        if r["id"] not in merged:
-            r.setdefault("content_preview", "")
-            merged[r["id"]] = r
+    # 3) Insights vector search (always)
+    insights = _retrieve_insights(text_vec, top_k=5)
 
-    candidates = list(merged.values())
+    # 4) Temporal DB query (when temporal signals detected)
+    if pq.has_temporal and pq.date_from:
+        try:
+            date_to = pq.date_to or pq.date_from
+            temporal_rows = metadata_db.fetch_captures_in_range(
+                pq.date_from, date_to, limit=50,
+            )
+            temporal_results = []
+            for row in temporal_rows:
+                d = dict(row)
+                d["capture_id"] = d["id"]
+                temporal_results.append(d)
+            ranked_lists["temporal"] = temporal_results
+        except Exception as exc:
+            logger.debug(f"Temporal retrieval failed: {exc}")
+
+    # 5) Tag search (when entity names detected)
+    if pq.entity_filters:
+        try:
+            tag_results: list[dict[str, Any]] = []
+            seen_ids: set[str] = set()
+            for tag in pq.entity_filters[:3]:
+                rows = metadata_db.fetch_captures_by_tag(tag, limit=15)
+                for row in rows:
+                    d = dict(row)
+                    d["capture_id"] = d["id"]
+                    if d["id"] not in seen_ids:
+                        seen_ids.add(d["id"])
+                        tag_results.append(d)
+            ranked_lists["tags"] = tag_results
+        except Exception as exc:
+            logger.debug(f"Tag retrieval failed: {exc}")
+
+    # Fuse all sources
+    fused = _rrf_fuse(ranked_lists)
+
+    # Rerank top candidates with cross-encoder
+    rerank_pool = fused[:top_k * 3]
+    for item in rerank_pool:
+        if not item.get("content_preview"):
+            item["content_preview"] = (item.get("content") or "")[:300]
 
     reranked = reranker.rerank(
         query=query,
-        candidates=candidates,
+        candidates=rerank_pool,
         top_n=top_k,
         text_field="content_preview",
     )
@@ -190,6 +293,29 @@ def _retrieve_candidates(
     reranked = _remove_self_refs(reranked, query)
     reranked = _enrich_with_full_content(reranked)
     reranked = _apply_recency(reranked)
+
+    # 6) Graph walk on top 3 results for context expansion
+    if len(reranked) >= 2:
+        try:
+            graph_additions: list[dict[str, Any]] = []
+            existing_ids = {c.get("capture_id", c.get("id", "")) for c in reranked}
+            for seed in reranked[:3]:
+                cid = seed.get("capture_id", seed.get("id", ""))
+                if not cid:
+                    continue
+                related = graph_db.get_related(cid, limit=3)
+                for r in related:
+                    rid = r.get("id", "")
+                    if rid and rid not in existing_ids:
+                        r["capture_id"] = rid
+                        r["_source"] = "graph"
+                        graph_additions.append(r)
+                        existing_ids.add(rid)
+            if graph_additions:
+                graph_additions = _enrich_with_full_content(graph_additions)
+                reranked.extend(graph_additions[:3])
+        except Exception as exc:
+            logger.debug(f"Graph expansion failed: {exc}")
 
     return reranked, insights
 

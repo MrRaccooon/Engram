@@ -384,6 +384,36 @@ def fetch_captures_by_tag(tag: str, limit: int = 20) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def fetch_captures_in_range(
+    start_iso: str, end_iso: str, limit: int = 100
+) -> list[sqlite3.Row]:
+    """Return indexed captures between start and end timestamps."""
+    with _connect() as conn:
+        return conn.execute(
+            """
+            SELECT * FROM captures
+            WHERE timestamp >= ? AND timestamp <= ?
+              AND status = 'indexed'
+            ORDER BY timestamp ASC
+            LIMIT ?
+            """,
+            (start_iso, end_iso + "T23:59:59" if len(end_iso) == 10 else end_iso, limit),
+        ).fetchall()
+
+
+def fetch_distinct_tags(limit: int = 500) -> list[str]:
+    """Return the most common tags across all captures."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT tag, COUNT(*) AS cnt FROM capture_tags
+            GROUP BY tag ORDER BY cnt DESC LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [r["tag"] for r in rows]
+
+
 # ── Session context helpers ────────────────────────────────────────────────────
 
 def fetch_recent_captures(minutes: int = 60, limit: int = 40) -> list[sqlite3.Row]:
