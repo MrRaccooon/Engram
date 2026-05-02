@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { X } from 'lucide-react'
 import { useStore } from '../store/useStore'
+import { sessionLogger } from '../utils/sessionLogger'
 
 const SOURCE_OPTIONS = [
   { value: 'screenshot', label: 'Screenshots' },
@@ -37,13 +38,15 @@ export function FilterSidebar() {
 
   const toggleSourceType = (val: string) => {
     const current = filters.source_types ?? []
-    const updated = current.includes(val)
+    const toggling = current.includes(val) ? 'off' : 'on'
+    const updated = toggling === 'off'
       ? current.filter(v => v !== val)
       : [...current, val]
+    sessionLogger.log('filter', 'toggle_source', { source: val, toggling })
     setFilters({ ...filters, source_types: updated.length ? updated : undefined })
   }
 
-  const reset = () => setFilters({})
+  const reset = () => { sessionLogger.log('filter', 'reset'); setFilters({}) }
 
   return (
     <AnimatePresence>

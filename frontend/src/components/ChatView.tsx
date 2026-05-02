@@ -4,6 +4,7 @@ import { Send, Bot, User, Trash2, Zap, ShieldCheck, ChevronDown } from 'lucide-r
 import { useStore, type ChatMessage } from '../store/useStore'
 import { askApi, type AskPreviewResponse } from '../api/client'
 import { SensitivityModal } from './SensitivityModal'
+import { sessionLogger } from '../utils/sessionLogger'
 
 let _msgCounter = 0
 const newId = () => `msg-${++_msgCounter}-${Date.now()}`
@@ -124,6 +125,7 @@ export function ChatView() {
   const executeAsk = async (query: string) => {
     setSensitivityPreview(null)
     setChatLoading(true)
+    sessionLogger.log('ask', 'send', { query, deep })
 
     try {
       const resp = await askApi.ask(query, 10, deep)
@@ -136,6 +138,7 @@ export function ChatView() {
         model_used: resp.model_used,
         query_time_ms: resp.query_time_ms,
       })
+      sessionLogger.log('ask', 'response', { model: resp.model_used, passing: resp.passing_count, blocked: resp.blocked_count }, resp.query_time_ms)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Request failed'
       addChatMessage({
@@ -143,6 +146,7 @@ export function ChatView() {
         role: 'assistant',
         content: `Error: ${msg}`,
       })
+      sessionLogger.log('ask', 'error', { error: msg })
     } finally {
       setChatLoading(false)
       setPendingChatQuery('')
@@ -181,10 +185,12 @@ export function ChatView() {
   }
 
   const handleConfirm = () => {
+    sessionLogger.log('ask', 'privacy_confirmed')
     if (pendingChatQuery) executeAsk(pendingChatQuery)
   }
 
   const handleCancel = () => {
+    sessionLogger.log('ask', 'privacy_cancelled')
     setSensitivityPreview(null)
     setPendingChatQuery('')
     setChatLoading(false)
@@ -203,7 +209,7 @@ export function ChatView() {
 
         {/* Deep mode toggle */}
         <button
-          onClick={() => setDeep(d => !d)}
+          onClick={() => { setDeep(d => { sessionLogger.log('ask', 'toggle_deep', { deep: !d }); return !d }) }}
           className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
           style={{
             background: deep ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'var(--surface-2)',
@@ -217,7 +223,7 @@ export function ChatView() {
 
         {/* Confirm toggle */}
         <button
-          onClick={() => setConfirmEnabled(c => !c)}
+          onClick={() => { setConfirmEnabled(c => { sessionLogger.log('ask', 'toggle_review', { review: !c }); return !c }) }}
           className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
           style={{
             background: confirmEnabled ? 'color-mix(in srgb, #22c55e 12%, transparent)' : 'var(--surface-2)',
@@ -231,7 +237,7 @@ export function ChatView() {
 
         {chatMessages.length > 0 && (
           <button
-            onClick={clearChat}
+            onClick={() => { sessionLogger.log('ask', 'clear_chat'); clearChat() }}
             className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors"
             style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}
             title="Clear conversation"

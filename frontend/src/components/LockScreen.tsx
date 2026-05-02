@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Brain, Lock, Unlock, Eye, EyeOff } from 'lucide-react'
 import { authApi } from '../api/client'
+import { sessionLogger } from '../utils/sessionLogger'
 
 interface Props {
   onUnlocked: (token: string) => void
@@ -17,10 +18,13 @@ export function LockScreen({ onUnlocked }: Props) {
     if (!pin || loading) return
     setLoading(true)
     setError('')
+    sessionLogger.log('auth', 'unlock_attempt')
     try {
       const resp = await authApi.unlock(pin)
+      sessionLogger.log('auth', 'unlock_success')
       onUnlocked(resp.token)
     } catch {
+      sessionLogger.log('auth', 'unlock_failed')
       setError('Incorrect PIN. Try again.')
       setPin('')
     } finally {

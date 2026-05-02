@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { ChevronLeft, ChevronRight, Monitor, Clipboard, Globe, FileText, Mic } from 'lucide-react'
 import { searchApi, type TimelineCapture } from '../api/client'
 import { useStore } from '../store/useStore'
+import { sessionLogger } from '../utils/sessionLogger'
 
 const SOURCE_ICONS: Record<string, React.ReactNode> = {
   screenshot: <Monitor size={14} />,
@@ -75,8 +76,9 @@ export function TimelineView() {
 
   useEffect(() => {
     setLoading(true)
+    sessionLogger.log('timeline', 'load', { date: timelineDate })
     searchApi.timeline(timelineDate)
-      .then(r => setCaptures(r.captures))
+      .then(r => { setCaptures(r.captures); sessionLogger.log('timeline', 'loaded', { date: timelineDate, count: r.captures.length }) })
       .catch(() => setCaptures([]))
       .finally(() => setLoading(false))
   }, [timelineDate])
@@ -84,12 +86,16 @@ export function TimelineView() {
   const prevDay = () => {
     const d = new Date(timelineDate + 'T12:00:00')
     d.setDate(d.getDate() - 1)
-    setTimelineDate(d.toISOString().split('T')[0])
+    const ds = d.toISOString().split('T')[0]
+    sessionLogger.log('timeline', 'prev_day', { date: ds })
+    setTimelineDate(ds)
   }
   const nextDay = () => {
     const d = new Date(timelineDate + 'T12:00:00')
     d.setDate(d.getDate() + 1)
-    setTimelineDate(d.toISOString().split('T')[0])
+    const ds = d.toISOString().split('T')[0]
+    sessionLogger.log('timeline', 'next_day', { date: ds })
+    setTimelineDate(ds)
   }
 
   const hourGroups = groupByHour(captures)

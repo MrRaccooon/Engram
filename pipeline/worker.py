@@ -16,6 +16,7 @@ prevents overlap, but the function itself is also idempotent).
 
 from __future__ import annotations
 
+import re
 import uuid
 from pathlib import Path
 
@@ -24,7 +25,52 @@ from loguru import logger
 from pipeline import chunker, embedder
 from storage import metadata_db, vector_db
 
-_BATCH_SIZE = 16  # captures processed per worker invocation
+_BATCH_SIZE = 64  # captures processed per worker invocation
+
+# ── OCR post-processing helpers ───────────────────────────────────────────────
+
+# Patterns for Python/Node/terminal errors visible in screenshots
+_ERROR_PATTERNS = [
+    # Python exceptions: "TypeError: ...", "ValueError: ..."
+    re.compile(r"\b([A-Z][a-zA-Z]+Error|[A-Z][a-zA-Z]+Exception|Traceback)\b[^\n]*", re.IGNORECASE),
+    # "Error:" generic prefix
+    re.compile(r"\bError:\s+[^\n]{5,120}"),
+    # npm/node errors
+    re.compile(r"\bERR![^\n]{5,100}"),
+    # File path + line reference (common in tracebacks)
+    re.compile(r'File "[^"]+", line \d+'),
+    # Command failed / exit code
+    re.compile(r"(?:exit code|exited with|failed with|returned non-zero)[^\n]{0,60}", re.IGNORECASE),
+    # HTTP error codes
+    re.compile(r"\b[45]\d{2}\s+(?:Error|Not Found|Internal Server Error|Bad Request)[^\n]{0,60}", re.IGNORECASE),
+]
+
+
+def _extract_errors_from_ocr(ocr_text: str) -> str:
+    """
+    Scan OCR text for error patterns and prepend them as structured
+    high-priority content. The raw OCR text is still included so
+    non-error content isn't lost.
+    """
+    error_hits: list[str] = []
+    for pattern in _ERROR_PATTERNS:
+        for match in pattern.findall(ocr_text):
+            hit = match.strip() if isinstance(match, str) else " ".join(match).strip()
+            if hit and len(hit) > 8:
+                error_hits.append(hit)
+
+    if error_hits:
+        # Deduplicate preserving order
+        seen: set[str] = set()
+        unique = []
+        for h in error_hits:
+            if h not in seen:
+                seen.add(h)
+                unique.append(h)
+        error_block = "ERRORS VISIBLE: " + " | ".join(unique[:6])
+        return f"{error_block}\n{ocr_text}"
+
+    return ocr_text
 
 
 def process_batch(batch_size: int = _BATCH_SIZE) -> int:
@@ -72,24 +118,71 @@ def _process_capture(row) -> None:
     text = content
 
     if source_type == "screenshot":
-        # For screenshots, build a rich metadata string that's always available.
-        # Window title + app name give strong context for semantic search
-        # (e.g. "Cursor - state.py - Engram" or "WhatsApp" or "GitHub - Brave").
+        # Parse window title into structured context for richer searchable text
+        try:
+            from pipeline.context_parser import parse_window
+            ctx = parse_window(window_title, app_name)
+            rich_text = ctx.get("rich_text", "")
+        except Exception as exc:
+            logger.debug(f"context_parser skipped for {capture_id[:8]}: {exc}")
+            ctx = {}
+            rich_text = ""
+
+        # Build meta text: rich parsed description + fallback raw fields
         meta_parts = []
-        if app_name:
+        if rich_text:
+            meta_parts.append(rich_text)
+        elif app_name:
             clean_app = app_name.replace(".exe", "")
             meta_parts.append(clean_app)
-        if window_title:
-            meta_parts.append(window_title)
-        meta_text = " — ".join(meta_parts) if meta_parts else ""
+            if window_title:
+                meta_parts.append(window_title)
+
+        # Add project / file as standalone keywords for better recall
+        if ctx.get("file"):
+            meta_parts.append(f"file:{ctx['file']}")
+        if ctx.get("project"):
+            meta_parts.append(f"project:{ctx['project']}")
+        if ctx.get("question"):
+            meta_parts.append(ctx["question"])
+
+        meta_text = " | ".join(meta_parts) if meta_parts else ""
 
         if not text.strip():
             text = meta_text
         elif meta_text:
             text = f"{meta_text}\n{text}"
 
+        # RapidOCR + screenshot analyzer: read the screenshot as a document
+        if thumb_path and Path(thumb_path).is_file():
+            try:
+                from pipeline.ocr_fast import extract_text as _ocr
+                from pipeline.screenshot_analyzer import analyze, to_searchable_text
+
+                ocr_text = _ocr(thumb_path) or ""
+                if ocr_text.strip():
+                    # Analyze what type of content is visible and extract structure
+                    screen_ctx = analyze(ocr_text, window_title=window_title, app_name=app_name)
+                    enriched = to_searchable_text(screen_ctx, raw_ocr=ocr_text)
+                    text = f"{text}\n{enriched}" if text.strip() else enriched
+                    if screen_ctx.summary:
+                        logger.debug(f"Screen analysis [{capture_id[:8]}]: {screen_ctx.content_type} — {screen_ctx.summary[:80]}")
+            except Exception as exc:
+                logger.debug(f"Screenshot analysis skipped for {capture_id[:8]}: {exc}")
+
     if not text.strip() and source_type != "screenshot":
         logger.debug(f"No text content for {capture_id[:8]} ({source_type}), skipping text embed")
+
+    # ── 1b. Write enriched text back to SQLite so timeline/detail view works ─
+    if source_type == "screenshot" and text.strip():
+        try:
+            with metadata_db._connect() as conn:
+                conn.execute(
+                    "UPDATE captures SET content = ? WHERE id = ?",
+                    (text[:4000], capture_id),
+                )
+        except Exception as exc:
+            logger.debug(f"Content writeback skipped for {capture_id[:8]}: {exc}")
 
     # ── 2. Chunk + text embed ─────────────────────────────────────────────────
     if text.strip():

@@ -83,6 +83,7 @@ async def app_time(
         daily[day][app] = daily[day].get(app, 0) + secs
 
     sorted_apps = sorted(by_app.items(), key=lambda x: x[1], reverse=True)
+    logger.info(f"Activity apps: {from_date}..{to_date} → {len(sorted_apps)} apps")
 
     return {
         "from": from_date,
@@ -167,6 +168,7 @@ async def focus_sessions(
             "duration_minutes": round(duration / 60, 1),
         })
 
+    logger.info(f"Focus sessions: date={date_str} → {len(sessions)} sessions")
     return {"date": date_str, "sessions": sessions}
 
 
@@ -203,4 +205,5 @@ async def heatmap(
         wd = (int(row["weekday"]) + 6) % 7  # 0=Mon
         cells.append({"weekday": wd, "hour": row["hour"], "count": row["count"]})
 
+    logger.info(f"Heatmap: weeks={weeks} → {len(cells)} cells")
     return {"weeks": weeks, "cells": cells}

@@ -116,6 +116,18 @@ if __name__ == "__main__":
     from daemon import scheduler
     scheduler.start()
 
+    # Pre-warm embedding models in background so first search isn't 22s
+    def _prewarm():
+        try:
+            from pipeline import embedder
+            embedder._get_text_model()
+            embedder._get_clip()
+            logger.info("Model pre-warm complete")
+        except Exception as exc:
+            logger.warning(f"Model pre-warm failed (will retry on first use): {exc}")
+
+    threading.Thread(target=_prewarm, daemon=True, name="model-prewarm").start()
+
     # Hotkey listener
     _start_hotkey_listener(cfg)
 

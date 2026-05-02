@@ -1,26 +1,25 @@
 """
 Screenshot collector.
 
-Captures the full screen using PIL ImageGrab, generates a perceptual hash
-to deduplicate near-identical frames, saves a thumbnail, and enqueues
+Captures the full screen using mss (cross-platform), generates a perceptual
+hash to deduplicate near-identical frames, saves a thumbnail, and enqueues
 the capture for embedding via the hot-path queue_manager.
 """
 
 from __future__ import annotations
 
-import io
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 import imagehash
+import mss
 from loguru import logger
-from PIL import Image, ImageGrab
+from PIL import Image
 
 from pipeline import queue_manager
 from collectors.window_context import get_active_window
 
-# Last phash seen — used for frame-level deduplication in the same process
 _last_phash: Optional[imagehash.ImageHash] = None
 _SIMILARITY_THRESHOLD = 5  # hamming distance; lower = stricter dedupe
 
@@ -34,7 +33,10 @@ def capture(storage_root: Path, thumbnail_size: int = 1024) -> Optional[str]:
     global _last_phash
 
     try:
-        img: Image.Image = ImageGrab.grab(all_screens=True)
+        with mss.mss() as sct:
+            # monitors[0] is the virtual screen spanning all monitors
+            shot = sct.grab(sct.monitors[0])
+            img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
     except Exception as exc:
         logger.warning(f"Screenshot failed: {exc}")
         return None

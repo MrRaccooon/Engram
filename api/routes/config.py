@@ -18,6 +18,8 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from loguru import logger
+
 from storage import metadata_db, vector_db
 from storage.retention import run as run_retention
 
@@ -41,8 +43,11 @@ def _save_config(data: dict) -> None:
 @router.get("/config")
 async def get_config() -> dict:
     try:
-        return _load_config()
+        cfg = _load_config()
+        logger.debug("Config read")
+        return cfg
     except Exception as exc:
+        logger.error(f"Config read failed: {exc}")
         raise HTTPException(status_code=500, detail=f"Failed to read config: {exc}")
 
 
@@ -72,8 +77,10 @@ async def update_config(req: ConfigUpdateRequest) -> dict:
             else:
                 cfg[section] = values
         _save_config(cfg)
+        logger.info(f"Config updated: sections={list(update.keys())}")
         return {"status": "updated", "config": cfg}
     except Exception as exc:
+        logger.error(f"Config update failed: {exc}")
         raise HTTPException(status_code=500, detail=f"Failed to update config: {exc}")
 
 
@@ -90,12 +97,14 @@ async def delete_data(
     try:
         cutoff_iso = f"{before}T00:00:00"
         deleted = metadata_db.delete_captures_before(cutoff_iso)
+        logger.info(f"Data deleted: {deleted} captures before {before}")
         return {
             "status": "deleted",
             "captures_removed": deleted,
             "cutoff": before,
         }
     except Exception as exc:
+        logger.error(f"Data deletion failed: {exc}")
         raise HTTPException(status_code=500, detail=f"Deletion failed: {exc}")
 
 
@@ -152,6 +161,8 @@ async def run_retention_now() -> dict:
             retention_days=cfg["storage"].get("retention_days", 90),
             max_storage_gb=cfg["storage"].get("max_storage_gb", 10),
         )
+        logger.info("Retention policy executed manually")
         return {"status": "ok", "message": "Retention policy executed"}
     except Exception as exc:
+        logger.error(f"Retention run failed: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))

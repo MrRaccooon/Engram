@@ -13,6 +13,8 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from loguru import logger
+
 from pipeline import embedder, reranker
 from storage import metadata_db, vector_db
 
@@ -164,6 +166,7 @@ async def search(req: SearchRequest) -> SearchResponse:
         )
 
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
+    logger.info(f"Search q={req.query!r} → {len(response_items)} results ({total_candidates} candidates) in {elapsed_ms}ms")
     return SearchResponse(
         results=response_items,
         query_time_ms=elapsed_ms,
@@ -177,7 +180,9 @@ async def related(capture_id: str, limit: int = Query(default=5, ge=1, le=20)) -
     try:
         from storage.graph_db import get_related
         results = get_related(capture_id, limit=limit)
+        logger.info(f"Related capture_id={capture_id[:8]} → {len(results)} related")
     except Exception as exc:
+        logger.error(f"Related lookup failed for {capture_id[:8]}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
 
     formatted = [
@@ -204,8 +209,10 @@ async def timeline(date: str = Query(..., description="Date in YYYY-MM-DD format
     try:
         rows = metadata_db.fetch_captures_for_day(date)
     except Exception as exc:
+        logger.error(f"Timeline fetch failed for {date}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
 
+    logger.info(f"Timeline date={date} → {len(rows)} captures")
     captures = [
         {
             "capture_id": r["id"],

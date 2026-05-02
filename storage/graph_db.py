@@ -20,7 +20,7 @@ from typing import Any
 from storage import metadata_db
 
 
-SIMILARITY_THRESHOLD = 0.82  # minimum cosine similarity to create a semantic edge
+SIMILARITY_THRESHOLD = 0.60  # lowered from 0.82 — short metadata strings rarely exceed 0.75
 
 
 def build_edges_for_capture(

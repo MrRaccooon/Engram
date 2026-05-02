@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Lightbulb, ChevronDown, ChevronRight, Calendar } from 'lucide-react'
 import { insightsApi, type InsightEntry } from '../api/client'
+import { sessionLogger } from '../utils/sessionLogger'
 
 function TopicPill({ topic }: { topic: string }) {
   return (
@@ -32,7 +33,7 @@ function InsightCard({ insight }: { insight: InsightEntry }) {
     >
       <button
         className="flex w-full items-start gap-4 px-5 py-4 text-left transition-colors hover:bg-[var(--surface-2)]"
-        onClick={() => setExpanded(e => !e)}
+        onClick={() => { setExpanded(e => !e); sessionLogger.log('insights', 'toggle_card', { id: insight.id }) }}
       >
         {/* Time indicator */}
         <div
@@ -119,8 +120,9 @@ export function InsightsView() {
 
   const load = (date?: string) => {
     setLoading(true)
+    sessionLogger.log('insights', 'load', { date: date ?? 'last_7_days' })
     insightsApi.list(date || undefined)
-      .then(d => setInsights(d.insights))
+      .then(d => { setInsights(d.insights); sessionLogger.log('insights', 'loaded', { count: d.insights.length }) })
       .catch(() => setInsights([]))
       .finally(() => setLoading(false))
   }

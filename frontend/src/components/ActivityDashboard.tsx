@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BarChart2, Clock, Flame } from 'lucide-react'
 import { activityApi, type AppTimeEntry, type FocusSession, type HeatmapCell } from '../api/client'
+import { sessionLogger } from '../utils/sessionLogger'
 
 function fmt(seconds: number): string {
   if (seconds < 60) return `${seconds}s`
@@ -109,14 +110,16 @@ export function ActivityDashboard() {
 
   useEffect(() => {
     setLoading(true)
+    sessionLogger.log('activity', 'load')
     Promise.all([
-      activityApi.apps(weekAgo, today).then(d => setApps(d.totals)),
-      activityApi.heatmap(4).then(d => setHeatmap(d.cells)),
+      activityApi.apps(weekAgo, today).then(d => { setApps(d.totals); sessionLogger.log('activity', 'apps_loaded', { count: d.totals.length }) }),
+      activityApi.heatmap(4).then(d => { setHeatmap(d.cells); sessionLogger.log('activity', 'heatmap_loaded', { cells: d.cells.length }) }),
     ]).finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
-    activityApi.focus(selectedDate).then(d => setSessions(d.sessions)).catch(() => setSessions([]))
+    sessionLogger.log('activity', 'focus_date', { date: selectedDate })
+    activityApi.focus(selectedDate).then(d => { setSessions(d.sessions); sessionLogger.log('activity', 'focus_loaded', { sessions: d.sessions.length }) }).catch(() => setSessions([]))
   }, [selectedDate])
 
   const maxSeconds = apps[0]?.seconds ?? 1

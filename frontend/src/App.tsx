@@ -13,6 +13,7 @@ import { InsightsView } from './components/InsightsView'
 import { LockScreen } from './components/LockScreen'
 import { useStore } from './store/useStore'
 import { api, captureApi, authApi } from './api/client'
+import { sessionLogger } from './utils/sessionLogger'
 
 type NavItem = { id: 'search' | 'timeline' | 'chat' | 'activity' | 'insights' | 'settings'; label: string; icon: React.ReactNode }
 
@@ -80,9 +81,9 @@ export default function App() {
   // Global keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === 'k') { e.preventDefault(); setView('search') }
-      if (e.ctrlKey && e.key === 't') { e.preventDefault(); setView('timeline') }
-      if (e.ctrlKey && e.key === 'j') { e.preventDefault(); setView('chat') }
+      if (e.ctrlKey && e.key === 'k') { e.preventDefault(); setView('search'); sessionLogger.log('nav', 'shortcut', { key: 'Ctrl+K', view: 'search' }) }
+      if (e.ctrlKey && e.key === 't') { e.preventDefault(); setView('timeline'); sessionLogger.log('nav', 'shortcut', { key: 'Ctrl+T', view: 'timeline' }) }
+      if (e.ctrlKey && e.key === 'j') { e.preventDefault(); setView('chat'); sessionLogger.log('nav', 'shortcut', { key: 'Ctrl+J', view: 'chat' }) }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -121,7 +122,7 @@ export default function App() {
           {NAV.map(item => (
             <button
               key={item.id}
-              onClick={() => setView(item.id)}
+              onClick={() => { setView(item.id); sessionLogger.log('nav', 'click', { view: item.id }) }}
               className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
               style={{
                 background: view === item.id ? 'var(--surface-2)' : 'transparent',
@@ -138,7 +139,7 @@ export default function App() {
 
         {/* Manual capture button */}
         <button
-          onClick={() => captureApi.manual().catch(() => {})}
+          onClick={() => { sessionLogger.log('capture', 'manual_click'); captureApi.manual().catch(() => {}) }}
           title="Capture now (Ctrl+Shift+M)"
           className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors"
           style={{ background: 'var(--surface-2)', color: 'var(--accent)' }}
