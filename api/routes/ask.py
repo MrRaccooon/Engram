@@ -106,15 +106,7 @@ def _remove_self_refs(candidates: list[dict[str, Any]], query: str) -> list[dict
     ]
 
 
-def _retrieve_candidates(
-    query: str,
-    top_k: int,
-    filters: AskFilters,
-) -> list[dict[str, Any]]:
-    """Dual vector retrieval + recency weighting + self-ref cleanup."""
-    retrieval_top_k = min(top_k * 5, 50)
-
-    where: Optional[dict] = None
+def _build_chroma_where(filters: AskFilters) -> Optional[dict]:
     conditions = []
     if filters.source_types:
         conditions.append({"source_type": {"$in": filters.source_types}})
@@ -123,12 +115,53 @@ def _retrieve_candidates(
     if filters.date_to:
         conditions.append({"timestamp": {"$lte": filters.date_to + "T23:59:59"}})
     if len(conditions) == 1:
-        where = conditions[0]
+        return conditions[0]
     elif len(conditions) > 1:
-        where = {"$and": conditions}
+        return {"$and": conditions}
+    return None
+
+
+def _enrich_with_full_content(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Replace 300-char content_preview with full content from SQLite."""
+    for c in candidates:
+        capture_id = c.get("capture_id", "")
+        if not capture_id:
+            continue
+        row = metadata_db.fetch_capture_by_id(capture_id)
+        if row and row["content"]:
+            c["content"] = row["content"]
+            if not c.get("window_title") and row["window_title"]:
+                c["window_title"] = row["window_title"]
+            if not c.get("url") and row["url"]:
+                c["url"] = row["url"]
+    return candidates
+
+
+def _retrieve_insights(query_vec: list[float], top_k: int = 5) -> list[dict[str, Any]]:
+    """Retrieve consolidated session summaries from the insights vector collection."""
+    try:
+        return vector_db.query_insights(query_vec, top_k=top_k)
+    except Exception as exc:
+        logger.debug(f"Insights retrieval failed: {exc}")
+        return []
+
+
+def _retrieve_candidates(
+    query: str,
+    top_k: int,
+    filters: AskFilters,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """
+    Dual vector retrieval + insights retrieval + full content enrichment.
+    Returns (candidates, insights).
+    """
+    retrieval_top_k = min(top_k * 5, 50)
+    where = _build_chroma_where(filters)
 
     text_vec = embedder.embed_text(query)
     text_results = vector_db.query_text(text_vec, top_k=retrieval_top_k, where=where)
+
+    insights = _retrieve_insights(text_vec, top_k=5)
 
     visual_vec = embedder.embed_query_text_clip(query)
     visual_results: list[dict[str, Any]] = []
@@ -155,9 +188,10 @@ def _retrieve_candidates(
     )
 
     reranked = _remove_self_refs(reranked, query)
+    reranked = _enrich_with_full_content(reranked)
     reranked = _apply_recency(reranked)
 
-    return reranked
+    return reranked, insights
 
 
 # ── Session context builder ───────────────────────────────────────────────────
@@ -242,13 +276,15 @@ async def ask_preview(req: AskRequest) -> PreviewResponse:
     Build the masked prompt that would be sent to the API.
     No external API call is made. Used by the frontend confirmation modal.
     """
-    candidates = _retrieve_candidates(req.query, req.top_k, req.filters)
-    logger.info(f"Ask preview q={req.query!r} → {len(candidates)} candidates")
+    candidates, insights = _retrieve_candidates(req.query, req.top_k, req.filters)
+    logger.info(f"Ask preview q={req.query!r} → {len(candidates)} candidates, {len(insights)} insights")
 
     session_ctx = _build_session_context()
 
     try:
-        preview = intelligence.build_preview(req.query, candidates, session_context=session_ctx)
+        preview = intelligence.build_preview(
+            req.query, candidates, session_context=session_ctx, insights=insights,
+        )
     except Exception as exc:
         logger.error(f"Ask preview failed: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -265,12 +301,18 @@ async def ask(req: AskRequest) -> AskResponse:
     """
     t0 = time.perf_counter()
 
-    candidates = _retrieve_candidates(req.query, req.top_k, req.filters)
+    candidates, insights = _retrieve_candidates(req.query, req.top_k, req.filters)
     session_ctx = _build_session_context()
-    logger.info(f"Ask q={req.query!r} deep={req.deep} → {len(candidates)} candidates | session_ctx={'yes' if session_ctx else 'none'}")
+    logger.info(
+        f"Ask q={req.query!r} deep={req.deep} → {len(candidates)} candidates, "
+        f"{len(insights)} insights | session_ctx={'yes' if session_ctx else 'none'}"
+    )
 
     try:
-        result = intelligence.ask(req.query, candidates, deep=req.deep, session_context=session_ctx)
+        result = intelligence.ask(
+            req.query, candidates, deep=req.deep,
+            session_context=session_ctx, insights=insights,
+        )
     except Exception as exc:
         logger.error(f"Ask failed: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))

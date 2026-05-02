@@ -77,9 +77,14 @@ def _load_full_config() -> dict:
 
 # ── Local pre-summarizer (optional, via Ollama) ───────────────────────────────
 
+def _get_chunk_text(chunk: dict[str, Any]) -> str:
+    """Extract the best available text from a chunk, preferring full content."""
+    return chunk.get("content") or chunk.get("content_preview") or ""
+
+
 def _local_summarize(chunks: list[dict[str, Any]], model: str) -> list[dict[str, Any]]:
     """
-    Call a local Ollama model to compress each chunk's content_preview.
+    Call a local Ollama model to compress each chunk's text content.
     Falls back gracefully if Ollama is not running.
     """
     if not model:
@@ -89,7 +94,7 @@ def _local_summarize(chunks: list[dict[str, Any]], model: str) -> list[dict[str,
         import requests as req
         summarized = []
         for chunk in chunks:
-            text = chunk.get("content_preview", "") or ""
+            text = _get_chunk_text(chunk)
             if len(text.split()) < 40:
                 summarized.append(chunk)
                 continue
@@ -110,7 +115,7 @@ def _local_summarize(chunks: list[dict[str, Any]], model: str) -> list[dict[str,
             )
             if resp.ok:
                 summary = resp.json().get("response", text).strip()
-                summarized.append({**chunk, "content_preview": summary})
+                summarized.append({**chunk, "content": summary})
             else:
                 summarized.append(chunk)
 
@@ -123,37 +128,82 @@ def _local_summarize(chunks: list[dict[str, Any]], model: str) -> list[dict[str,
 
 # ── Prompt assembly ───────────────────────────────────────────────────────────
 
-def _assemble_prompt(query: str, chunks: list[dict[str, Any]], max_tokens: int) -> str:
-    """Build the context block that gets sent to the frontier API."""
-    context_parts = []
+_MAX_CHARS_PER_CAPTURE = 1200
+
+
+def _assemble_prompt(
+    query: str,
+    chunks: list[dict[str, Any]],
+    max_tokens: int,
+    insights: list[dict[str, Any]] | None = None,
+) -> str:
+    """Build a structured, temporally-ordered prompt for the frontier API."""
+    sections: list[str] = []
     token_count = 0
 
-    for i, chunk in enumerate(chunks, 1):
-        text = chunk.get("content_preview", "") or ""
+    if insights:
+        insight_lines = []
+        for ins in insights:
+            summary = ins.get("summary_preview") or ins.get("summary") or ""
+            date = ins.get("date", "")
+            if summary:
+                insight_lines.append(f"- [{date}] {summary[:300]}")
+        if insight_lines:
+            block = "## Session Summaries\n" + "\n".join(insight_lines)
+            token_count += len(block.split())
+            sections.append(block)
+
+    sorted_chunks = sorted(
+        chunks,
+        key=lambda c: c.get("timestamp") or "",
+    )
+
+    capture_lines = []
+    for chunk in sorted_chunks:
+        text = _get_chunk_text(chunk)
+        if not text.strip():
+            continue
+
+        if len(text) > _MAX_CHARS_PER_CAPTURE:
+            text = text[:_MAX_CHARS_PER_CAPTURE] + "…"
+
         source = chunk.get("source_type", "unknown")
-        ts = (chunk.get("timestamp") or "")[:19]
-        app = chunk.get("app_name", "")
+        ts_raw = chunk.get("timestamp") or ""
+        app = (chunk.get("app_name") or "").replace(".exe", "")
         url = chunk.get("url", "")
+        window = chunk.get("window_title") or ""
 
-        meta = f"[{i}] {source.upper()} • {ts}"
-        if app:
-            meta += f" • {app}"
+        try:
+            from datetime import datetime as _dt
+            ts_dt = _dt.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            ts_label = ts_dt.strftime("%I:%M %p")
+        except Exception:
+            ts_label = ts_raw[:16]
+
+        header = f"### {ts_label} — {app or source.upper()}"
+        if window and app and window != app:
+            header += f" ({window[:60]})"
         if url:
-            meta += f" • {url[:60]}"
+            header += f"\n{url[:80]}"
 
-        entry = f"{meta}\n{text}"
+        entry = f"{header}\n{text}"
         entry_tokens = len(entry.split())
 
         if token_count + entry_tokens > max_tokens:
             break
 
-        context_parts.append(entry)
+        capture_lines.append(entry)
         token_count += entry_tokens
 
-    context_block = "\n\n---\n\n".join(context_parts)
+    if capture_lines:
+        sections.append(
+            "## Relevant Captures (chronological)\n\n"
+            + "\n\n".join(capture_lines)
+        )
+
+    context_block = "\n\n".join(sections) if sections else "(No relevant context found.)"
 
     return (
-        f"Context from your digital activity:\n\n"
         f"{context_block}\n\n"
         f"---\n\n"
         f"Question: {query}"
@@ -162,12 +212,15 @@ def _assemble_prompt(query: str, chunks: list[dict[str, Any]], max_tokens: int) 
 
 # ── API providers ─────────────────────────────────────────────────────────────
 
+_RESPONSE_MAX_TOKENS = 2048
+
+
 def _call_anthropic(system: str, user_prompt: str, model: str, api_key: str) -> str:
     import anthropic
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
         model=model,
-        max_tokens=1024,
+        max_tokens=_RESPONSE_MAX_TOKENS,
         system=system,
         messages=[{"role": "user", "content": user_prompt}],
     )
@@ -183,17 +236,12 @@ def _call_openai(system: str, user_prompt: str, model: str, api_key: str) -> str
             {"role": "system", "content": system},
             {"role": "user", "content": user_prompt},
         ],
-        max_tokens=1024,
+        max_tokens=_RESPONSE_MAX_TOKENS,
     )
     return response.choices[0].message.content or ""
 
 
 def _call_openrouter(system: str, user_prompt: str, model: str, api_key: str) -> str:
-    """
-    OpenRouter is OpenAI-compatible — same client, different base_url.
-    Supports every major model (Gemini, Claude, GPT, Llama, etc.)
-    at the cheapest available rates.
-    """
     from openai import OpenAI
     client = OpenAI(
         api_key=api_key,
@@ -209,7 +257,7 @@ def _call_openrouter(system: str, user_prompt: str, model: str, api_key: str) ->
             {"role": "system", "content": system},
             {"role": "user", "content": user_prompt},
         ],
-        max_tokens=1024,
+        max_tokens=_RESPONSE_MAX_TOKENS,
     )
     return response.choices[0].message.content or ""
 
@@ -220,21 +268,13 @@ def build_preview(
     query: str,
     retrieved_chunks: list[dict[str, Any]],
     session_context: str = "",
+    insights: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Run the privacy pipeline up to (but not including) the API call.
 
     Returns a preview dict that the frontend can show the user before
     they confirm sending.
-
-    Returns:
-        {
-          "masked_prompt": str,       # exact text that would be sent
-          "entity_map": dict,         # placeholder → real value
-          "blocked_count": int,       # chunks removed by sensitivity filter
-          "passing_count": int,       # chunks that passed
-          "estimated_tokens": int,    # rough token count of the prompt
-        }
     """
     full_cfg = _load_full_config()
     intel_cfg = _load_intelligence_config()
@@ -246,19 +286,12 @@ def build_preview(
     excluded_apps = cap_cfg.get("excluded_apps", [])
     excluded_domains = cap_cfg.get("excluded_domains", [])
 
-    # Step 2: Sensitivity filter
     passing, blocked_count = sensitivity.filter_chunks(
         retrieved_chunks, threshold, excluded_apps, excluded_domains
     )
-
-    # Step 3: Entity masking
     masked_chunks, entity_map = entity_masker.mask_chunks(passing)
-
-    # Step 4: Local pre-summarization (optional)
     compressed_chunks = _local_summarize(masked_chunks, local_model)
-
-    # Step 5: Assemble prompt
-    user_prompt = _assemble_prompt(query, compressed_chunks, max_tokens)
+    user_prompt = _assemble_prompt(query, compressed_chunks, max_tokens, insights=insights)
     system_prompt = _build_system_prompt(session_context)
 
     return {
@@ -276,6 +309,7 @@ def ask(
     retrieved_chunks: list[dict[str, Any]],
     deep: bool = False,
     session_context: str = "",
+    insights: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Run the full privacy pipeline and call the configured frontier API.
@@ -316,8 +350,7 @@ def ask(
         else intel_cfg.get("api_model", "google/gemini-2.0-flash-lite")
     )
 
-    # Build the preview (runs sensitivity + masking + summarization)
-    preview = build_preview(query, retrieved_chunks, session_context=session_context)
+    preview = build_preview(query, retrieved_chunks, session_context=session_context, insights=insights)
     user_prompt = preview["masked_prompt"]
     entity_map = preview["entity_map"]
     system_prompt = preview["system_prompt"]
