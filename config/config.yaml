@@ -57,7 +57,7 @@ embedding:
   # sentence-transformers model for text embedding
   text_model: "all-MiniLM-L6-v2"
   # CLIP model for visual embedding (open-clip-torch)
-  visual_model: "ViT-B-32"
+  visual_model: "ViT-L-14"
   visual_pretrained: "openai"
   # Cross-encoder model for reranking retrieved results
   reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"

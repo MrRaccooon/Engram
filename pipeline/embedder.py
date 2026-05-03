@@ -2,10 +2,11 @@
 Dual embedding engine.
 
 Text embedder : sentence-transformers (all-MiniLM-L6-v2)
-                → float[384], CPU-capable, ~80MB
+                -> float[384], CPU-capable, ~80MB
 
-Visual embedder: open-clip-torch (ViT-B/32 / openai pretrained)
-                → float[512], CPU-capable, ~350MB
+Visual embedder: open-clip-torch (ViT-L-14 / openai pretrained)
+                -> float[768], CPU-capable, ~900MB
+                Significantly better visual understanding than ViT-B/32.
 
 Both models are lazily loaded and cached for the process lifetime.
 Batch processing is used to amortise per-call overhead.
@@ -26,7 +27,7 @@ _clip_tokenizer = None  # open_clip tokenizer
 _clip_broken = False    # set True if CLIP init fails — skip all subsequent calls
 
 _TEXT_MODEL_NAME = "all-MiniLM-L6-v2"
-_CLIP_MODEL_NAME = "ViT-B-32"
+_CLIP_MODEL_NAME = "ViT-L-14"
 _CLIP_PRETRAINED = "openai"
 
 
