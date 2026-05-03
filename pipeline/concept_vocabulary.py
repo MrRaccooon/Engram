@@ -242,7 +242,7 @@ def harvest_from_window_titles() -> int:
     ]
 
     new_prompts: list[tuple[str, str]] = []  # (prompt, category)
-    seen_apps: set[str] = set()
+    seen_prompts: set[str] = set()
 
     for row in rows:
         app = (row["app_name"] or "").replace(".exe", "").strip()
@@ -252,9 +252,9 @@ def harvest_from_window_titles() -> int:
 
         for tpl in templates:
             prompt = tpl.format(app=app, title=title[:60]).strip()
-            if prompt.lower() not in existing_prompts and prompt.lower() not in seen_apps:
+            if prompt.lower() not in existing_prompts and prompt.lower() not in seen_prompts:
                 new_prompts.append((prompt, "harvested_window"))
-                seen_apps.add(prompt.lower())
+                seen_prompts.add(prompt.lower())
 
     if not new_prompts:
         return 0
@@ -348,7 +348,7 @@ def harvest_from_ocr_nouns(min_occurrences: int = 5) -> int:
 # ── Lifecycle management ────────────────────────────────────────────────────
 
 def promote_probation_concepts() -> int:
-    """Promote probation concepts that have proved useful."""
+    """Promote probation concepts that have proved useful. Returns count promoted."""
     rows = metadata_db.fetch_probation_concepts()
     promoted = 0
     now = datetime.utcnow()
@@ -370,7 +370,6 @@ def promote_probation_concepts() -> int:
                 pass
 
     if promoted:
-        _rebuild_cache()
         logger.info(f"Promoted {promoted} concepts from probation")
     return promoted
 
@@ -390,7 +389,6 @@ def apply_relevance_decay(decay_factor: float = 0.98) -> int:
             metadata_db.update_concept_relevance(r["id"], new_rel)
 
     if dormant_count:
-        _rebuild_cache()
         logger.info(f"Relevance decay: {dormant_count} concepts became dormant")
     return dormant_count
 
@@ -405,7 +403,6 @@ def recalculate_idf() -> None:
         idf = math.log(total_docs / (1 + mc))
         metadata_db.update_concept_idf(r["id"], idf)
 
-    _rebuild_cache()
     logger.debug(f"IDF recalculated for {len(rows)} concepts (total_docs={total_docs})")
 
 
@@ -431,7 +428,6 @@ def merge_similar_concepts(threshold: float = 0.95) -> int:
                 merged += 1
 
     if merged:
-        _rebuild_cache()
         logger.info(f"Merged {merged} near-duplicate concepts")
     return merged
 
