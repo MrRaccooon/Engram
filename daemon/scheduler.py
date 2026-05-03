@@ -37,6 +37,13 @@ def _init_storage(cfg: dict) -> Path:
     base = Path(cfg["storage"]["base_path"]).expanduser()
     metadata_db.init(base / "metadata.db")
     vector_db.init(base / "chromadb")
+
+    try:
+        from pipeline.concept_vocabulary import init as init_concepts
+        init_concepts()
+    except Exception as exc:
+        logger.warning(f"Concept vocabulary init deferred: {exc}")
+
     return base
 
 
@@ -71,18 +78,29 @@ def _job_screenshot(storage_root: Path, cfg: dict) -> None:
         logger.debug("Screenshot suppressed: incognito window detected")
         return
 
-    # Adaptive rate: terminals get a screenshot every tick (5s).
-    # Other apps only fire once per (normal_interval / 5) ticks.
     is_terminal = any(kw in app_lower for kw in _TERMINAL_APP_KEYWORDS)
     _screenshot_tick += 1
 
+    # Adaptive rate based on diff-detected activity level.
+    # Terminals always capture every tick (output disappears fast).
     if is_terminal:
-        # Always capture — terminal output disappears fast
         screenshot.capture(storage_root=storage_root, thumbnail_size=thumb_size)
-        logger.debug(f"Adaptive screenshot (terminal active): {app_name}")
     else:
-        ticks_needed = max(1, normal_interval // 5)
-        if _screenshot_tick % ticks_needed == 0:
+        try:
+            from pipeline.diff_analyzer import get_activity_level
+            activity = get_activity_level()
+        except Exception:
+            activity = "low"
+
+        if activity == "high":
+            do_capture = True
+        elif activity == "medium":
+            do_capture = (_screenshot_tick % 2 == 0)
+        else:
+            ticks_needed = max(1, normal_interval // 5)
+            do_capture = (_screenshot_tick % ticks_needed == 0)
+
+        if do_capture:
             screenshot.capture(storage_root=storage_root, thumbnail_size=thumb_size)
 
 
@@ -129,6 +147,16 @@ def _job_weekly_rollup() -> None:
     from daemon import state
     run_weekly_rollup()
     state.record_run("weekly_rollup")
+
+
+def _job_concept_harvest() -> None:
+    from pipeline.concept_vocabulary import run_harvest_cycle
+    run_harvest_cycle()
+
+
+def _job_concept_decay() -> None:
+    from pipeline.concept_vocabulary import run_decay_cycle
+    run_decay_cycle()
 
 
 def _job_daily_digest() -> None:
@@ -282,6 +310,27 @@ def start() -> None:
         hour=3,
         minute=0,
         id="weekly_rollup",
+        max_instances=1,
+        coalesce=True,
+    )
+
+    # Concept vocabulary: harvest every 6 hours
+    _scheduler.add_job(
+        _job_concept_harvest,
+        trigger="interval",
+        hours=6,
+        id="concept_harvest",
+        max_instances=1,
+        coalesce=True,
+    )
+
+    # Concept vocabulary: relevance decay + IDF + merge — daily at 1 AM
+    _scheduler.add_job(
+        _job_concept_decay,
+        trigger="cron",
+        hour=1,
+        minute=0,
+        id="concept_decay",
         max_instances=1,
         coalesce=True,
     )
