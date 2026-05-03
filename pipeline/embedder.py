@@ -144,3 +144,26 @@ def embed_query_text_clip(query: str) -> Optional[list[float]]:
     except Exception as exc:
         logger.warning(f"CLIP text query embedding failed: {exc}")
         return None
+
+
+def embed_clip_texts_batch(texts: list[str], batch_size: int = 64) -> list[list[float]]:
+    """
+    Embed multiple text prompts using CLIP's text encoder.
+    Useful for building large concept vocabularies.
+    """
+    if not texts:
+        return []
+    try:
+        model, _, tokenizer = _get_clip()
+        vectors: list[list[float]] = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            tokens = tokenizer(batch)
+            with torch.no_grad():
+                features = model.encode_text(tokens)
+                features = features / features.norm(dim=-1, keepdim=True)
+            vectors.extend(features.cpu().tolist())
+        return vectors
+    except Exception as exc:
+        logger.warning(f"CLIP batch text embedding failed: {exc}")
+        return []
