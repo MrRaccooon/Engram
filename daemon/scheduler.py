@@ -82,6 +82,7 @@ def _job_screenshot(storage_root: Path, cfg: dict) -> None:
     _screenshot_tick += 1
 
     # Adaptive rate based on diff-detected activity level.
+    # Base tick = 2s. Multipliers: high=1 (2s), medium=3 (6s), low=15 (30s).
     # Terminals always capture every tick (output disappears fast).
     if is_terminal:
         screenshot.capture(storage_root=storage_root, thumbnail_size=thumb_size)
@@ -95,9 +96,9 @@ def _job_screenshot(storage_root: Path, cfg: dict) -> None:
         if activity == "high":
             do_capture = True
         elif activity == "medium":
-            do_capture = (_screenshot_tick % 2 == 0)
+            do_capture = (_screenshot_tick % 3 == 0)
         else:
-            ticks_needed = max(1, normal_interval // 5)
+            ticks_needed = max(1, normal_interval // 2)
             do_capture = (_screenshot_tick % ticks_needed == 0)
 
         if do_capture:
@@ -236,13 +237,13 @@ def start() -> None:
 
     _scheduler = BackgroundScheduler(daemon=True)
 
-    # Screenshots run on a fixed 5-second tick.
-    # _job_screenshot internally decides whether to actually capture
-    # based on the active app (terminals every tick, others every N ticks).
+    # Screenshots run on a fixed 2-second tick.
+    # _job_screenshot internally decides whether to actually capture based
+    # on diff-detected activity level (high=2s, medium=6s, low=30s).
     _scheduler.add_job(
         _job_screenshot,
         trigger="interval",
-        seconds=5,
+        seconds=2,
         kwargs={"storage_root": storage_root, "cfg": cfg},
         id="screenshot",
         max_instances=1,
