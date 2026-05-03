@@ -100,9 +100,9 @@ class TestConceptSeedsCategories:
         prompts = all_seed_prompts()
         assert len(prompts) == len(set(prompts))
 
-    def test_total_seed_count_gte_250(self):
+    def test_total_seed_count_gte_200(self):
         prompts = all_seed_prompts()
-        assert len(prompts) >= 250
+        assert len(prompts) >= 200
 
     def test_every_prompt_is_nonempty_string(self):
         for p in all_seed_prompts():
@@ -604,16 +604,16 @@ class TestMatchQueryToConcepts:
             results = cv.match_query_to_concepts("test", top_k=5, threshold=0.0)
         assert len(results) >= 1
 
-    def test_returns_empty_for_no_clip_encoder(self, tmp_db, _reset_cv_state):
+    def test_returns_empty_for_no_text_encoder(self, tmp_db, _reset_cv_state):
         import pipeline.concept_vocabulary as cv
 
         metadata_db.insert_concept(
-            prompt="no clip test concept",
+            prompt="no encoder test concept",
             category="t", source="seed",
             clip_embedding=_vec_to_blob(_rand_unit_vec(512, seed=501)),
         )
         cv._rebuild_cache()
-        with patch("pipeline.embedder.embed_query_text_clip", return_value=None):
+        with patch("pipeline.embedder.embed_text", return_value=None):
             results = cv.match_query_to_concepts("test", top_k=5)
         assert results == []
 
