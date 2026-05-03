@@ -57,7 +57,7 @@ embedding:
   # sentence-transformers model for text embedding
   text_model: "all-MiniLM-L6-v2"
   # CLIP model for visual embedding (open-clip-torch)
-  visual_model: "ViT-B-32"
+  visual_model: "ViT-L-14"
   visual_pretrained: "openai"
   # Cross-encoder model for reranking retrieved results
   reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
@@ -126,6 +126,41 @@ consolidation:
   run_minute: 0
   # Session gap in minutes — captures this far apart start a new session
   session_gap_minutes: 30
+
+concept_vocabulary:
+  # Minimum CLIP similarity for a concept to match a screenshot
+  match_threshold: 0.15
+  # Max concepts returned per screenshot
+  top_k_per_screenshot: 8
+  # Relevance decay factor applied daily (concepts fade without matches)
+  relevance_decay_factor: 0.98
+  # Concepts below this relevance become dormant (can revive)
+  dormant_threshold: 0.05
+  # Probation: minimum matches to promote a learned concept
+  probation_min_matches: 3
+  # Probation: minimum average confidence to promote
+  probation_min_confidence: 0.18
+  # Probation: days before an unmatched concept is demoted to dormant
+  probation_max_days: 7
+  # Auto-merge: cosine threshold for treating two concepts as duplicates
+  merge_similarity_threshold: 0.95
+  # Flag concepts matching more than this fraction of screenshots
+  broad_concept_threshold: 0.4
+  # Harvest cycle interval in hours
+  harvest_interval_hours: 6
+  # OCR noun harvester: minimum occurrences before creating a concept
+  ocr_noun_min_occurrences: 5
+
+diff_analysis:
+  # Pixel-level change threshold for cv2.absdiff binary mask (0-255)
+  pixel_threshold: 30
+  # Comparison resolution (both dimensions)
+  resize_dim: 512
+  # Minimum contour area (in resized pixels) to count as a change region
+  min_contour_area: 50
+  # Change magnitude thresholds for activity classification
+  idle_threshold: 0.02
+  app_switch_threshold: 0.7
 
 mcp:
   # Expose Engram as an MCP tool server for Claude Desktop / Cursor / etc.

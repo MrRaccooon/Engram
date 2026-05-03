@@ -14,6 +14,7 @@ from typing import Optional
 
 import imagehash
 import mss
+import numpy as np
 from loguru import logger
 from PIL import Image
 
@@ -21,6 +22,8 @@ from pipeline import queue_manager
 from collectors.window_context import get_active_window
 
 _last_phash: Optional[imagehash.ImageHash] = None
+_prev_frame: Optional[np.ndarray] = None
+_prev_capture_id: Optional[str] = None
 _SIMILARITY_THRESHOLD = 5  # hamming distance; lower = stricter dedupe
 
 
@@ -68,6 +71,24 @@ def capture(storage_root: Path, thumbnail_size: int = 1024) -> Optional[str]:
     # Active window context
     window_title, app_name = get_active_window()
 
+    # Differential analysis against previous frame
+    diff_data_str: Optional[str] = None
+    curr_arr = np.array(img)
+
+    if _prev_frame is not None:
+        try:
+            from pipeline.diff_analyzer import compute_diff, to_dict
+            diff_result = compute_diff(
+                _prev_frame, curr_arr,
+                full_res_frame=curr_arr,
+                prev_capture_id=_prev_capture_id,
+            )
+            if diff_result.change_type != "idle":
+                import json as _json
+                diff_data_str = _json.dumps(to_dict(diff_result))
+        except Exception as exc:
+            logger.debug(f"Diff analysis skipped: {exc}")
+
     capture_id = queue_manager.enqueue(
         source_type="screenshot",
         timestamp=ts,
@@ -76,7 +97,16 @@ def capture(storage_root: Path, thumbnail_size: int = 1024) -> Optional[str]:
         phash=str(current_phash),
         window_title=window_title,
         app_name=app_name,
+        diff_data=diff_data_str,
     )
+
+    _update_prev_frame(curr_arr, capture_id)
 
     logger.debug(f"Screenshot captured → {thumb_path.name} ({capture_id[:8]})")
     return capture_id
+
+
+def _update_prev_frame(frame: np.ndarray, capture_id: str) -> None:
+    global _prev_frame, _prev_capture_id
+    _prev_frame = frame
+    _prev_capture_id = capture_id

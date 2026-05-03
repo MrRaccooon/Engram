@@ -2,10 +2,11 @@
 Dual embedding engine.
 
 Text embedder : sentence-transformers (all-MiniLM-L6-v2)
-                → float[384], CPU-capable, ~80MB
+                -> float[384], CPU-capable, ~80MB
 
-Visual embedder: open-clip-torch (ViT-B/32 / openai pretrained)
-                → float[512], CPU-capable, ~350MB
+Visual embedder: open-clip-torch (ViT-L-14 / openai pretrained)
+                -> float[768], CPU-capable, ~900MB
+                Significantly better visual understanding than ViT-B/32.
 
 Both models are lazily loaded and cached for the process lifetime.
 Batch processing is used to amortise per-call overhead.
@@ -26,7 +27,7 @@ _clip_tokenizer = None  # open_clip tokenizer
 _clip_broken = False    # set True if CLIP init fails — skip all subsequent calls
 
 _TEXT_MODEL_NAME = "all-MiniLM-L6-v2"
-_CLIP_MODEL_NAME = "ViT-B-32"
+_CLIP_MODEL_NAME = "ViT-L-14"
 _CLIP_PRETRAINED = "openai"
 
 
@@ -81,20 +82,6 @@ def _get_clip():
             _clip_model, _, _clip_preprocess = open_clip.create_model_and_transforms(
                 _CLIP_MODEL_NAME, pretrained=_CLIP_PRETRAINED, device="cpu"
             )
-            # open_clip 3.x + torch 2.11 may load weights on meta device;
-            # materialize to CPU so encode_image / encode_text actually work.
-            try:
-                _clip_model = _clip_model.to_empty(device="cpu")
-                import open_clip as _oc
-                _pt = _oc.get_pretrained_cfg(_CLIP_MODEL_NAME, _CLIP_PRETRAINED)
-                if _pt:
-                    from open_clip.pretrained import download_pretrained
-                    ckpt = download_pretrained(_pt)
-                    import torch as _torch
-                    state = _torch.load(ckpt, map_location="cpu", weights_only=True)
-                    _clip_model.load_state_dict(state, strict=False, assign=True)
-            except Exception as meta_exc:
-                logger.warning(f"CLIP meta-device reload failed, using default weights: {meta_exc}")
             _clip_model.eval()
             _clip_tokenizer = open_clip.get_tokenizer(_CLIP_MODEL_NAME)
             logger.info("CLIP model ready")
@@ -144,3 +131,26 @@ def embed_query_text_clip(query: str) -> Optional[list[float]]:
     except Exception as exc:
         logger.warning(f"CLIP text query embedding failed: {exc}")
         return None
+
+
+def embed_clip_texts_batch(texts: list[str], batch_size: int = 64) -> list[list[float]]:
+    """
+    Embed multiple text prompts using CLIP's text encoder.
+    Useful for building large concept vocabularies.
+    """
+    if not texts:
+        return []
+    try:
+        model, _, tokenizer = _get_clip()
+        vectors: list[list[float]] = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            tokens = tokenizer(batch)
+            with torch.no_grad():
+                features = model.encode_text(tokens)
+                features = features / features.norm(dim=-1, keepdim=True)
+            vectors.extend(features.cpu().tolist())
+        return vectors
+    except Exception as exc:
+        logger.warning(f"CLIP batch text embedding failed: {exc}")
+        return []

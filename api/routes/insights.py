@@ -21,6 +21,26 @@ from storage import metadata_db
 router = APIRouter(tags=["insights"])
 
 
+def _format_insight(row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "date": row["date"],
+        "session_start": row["session_start"],
+        "session_end": row["session_end"],
+        "summary": row["summary"],
+        "topics": row["topics"],
+        "consolidated_at": row["consolidated_at"],
+        "narrative": row["narrative"],
+        "topics_structured": row["topics_structured"],
+        "projects": row["projects"],
+        "files_touched": row["files_touched"],
+        "decisions": row["decisions"],
+        "problems": row["problems"],
+        "outcomes": row["outcomes"],
+        "consolidation_type": row["consolidation_type"],
+    }
+
+
 @router.get("/insights")
 async def get_insights(
     date: Optional[str] = Query(None, description="YYYY-MM-DD (omit for last 7 days)"),
@@ -35,18 +55,7 @@ async def get_insights(
         logger.error(f"Insights fetch failed: {exc}")
         return {"insights": [], "error": str(exc)}
 
-    insights = [
-        {
-            "id": row["id"],
-            "date": row["date"],
-            "session_start": row["session_start"],
-            "session_end": row["session_end"],
-            "summary": row["summary"],
-            "topics": row["topics"],
-            "consolidated_at": row["consolidated_at"],
-        }
-        for row in rows
-    ]
+    insights = [_format_insight(row) for row in rows]
 
     logger.info(f"Insights: date={date or 'last_7_days'} → {len(insights)} entries")
     return {"date": date, "insights": insights, "count": len(insights)}
@@ -65,13 +74,32 @@ async def get_latest_insight() -> dict[str, Any]:
         return {"insight": None}
 
     return {
-        "insight": {
-            "id": row["id"],
-            "date": row["date"],
-            "session_start": row["session_start"],
-            "session_end": row["session_end"],
-            "summary": row["summary"],
-            "topics": row["topics"],
-            "consolidated_at": row["consolidated_at"],
-        }
+        "insight": _format_insight(row)
     }
+
+
+@router.get("/learning/summary")
+async def get_learning_summary() -> dict[str, Any]:
+    """Return accumulated topic threads: what Engram has learned so far."""
+    try:
+        rows = metadata_db.fetch_all_topic_threads()
+    except Exception as exc:
+        logger.error(f"Learning summary fetch failed: {exc}")
+        return {"topics": [], "count": 0, "error": str(exc)}
+
+    topics = [
+        {
+            "id": row["id"],
+            "topic": row["topic"],
+            "summary": row["summary"],
+            "total_sessions": row["total_sessions"],
+            "total_minutes": row["total_minutes"],
+            "projects": row["projects"],
+            "files_touched": row["files_touched"],
+            "decisions": row["decisions"],
+            "last_updated": row["last_updated"],
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+    return {"topics": topics, "count": len(topics)}

@@ -26,6 +26,39 @@ router = APIRouter(tags=["capture"])
 _CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "config.yaml"
 
 
+def _memory_signals(capture_id: str) -> tuple[list[dict], list[dict]]:
+    """Return visual concepts and action events attached to a capture."""
+    try:
+        concept_rows = metadata_db.fetch_concepts_for_capture(capture_id, limit=6)
+        concepts = [
+            {
+                "id": r["id"],
+                "prompt": r["prompt"],
+                "category": r["category"],
+                "confidence": round(float(r["confidence"]), 4),
+            }
+            for r in concept_rows
+        ]
+    except Exception:
+        concepts = []
+
+    try:
+        event_rows = metadata_db.fetch_events_for_capture(capture_id, limit=3)
+        events = [
+            {
+                "id": r["id"],
+                "change_type": r["change_type"],
+                "change_magnitude": round(float(r["change_magnitude"]), 4),
+                "changed_text": r["changed_text"] or "",
+            }
+            for r in event_rows
+        ]
+    except Exception:
+        events = []
+
+    return concepts, events
+
+
 def _load_config() -> dict:
     with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -121,16 +154,19 @@ async def context(
     nearby = metadata_db.fetch_captures_in_window(center_ts, window_minutes)
 
     def _fmt(r) -> dict:
+        concepts, events = _memory_signals(r["id"])
         return {
             "capture_id": r["id"],
             "source_type": r["source_type"],
             "timestamp": r["timestamp"],
-            "content_preview": (r["content"] or "")[:200],
+            "content_preview": (r["content"] or "")[:500],
             "thumb_path": r["thumb_path"],
             "window_title": r["window_title"],
             "app_name": r["app_name"],
             "url": r["url"],
             "is_center": r["id"] == capture_id,
+            "concepts": concepts,
+            "events": events,
         }
 
     center_index = next(

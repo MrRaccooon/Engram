@@ -2,6 +2,7 @@ import { motion } from 'framer-motion'
 import { Monitor, Clipboard, Globe, FileText, Mic } from 'lucide-react'
 import type { CaptureResult } from '../api/client'
 import { useStore } from '../store/useStore'
+import { ConceptPills, EventPills } from './MemorySignals'
 
 const SOURCE_META: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
   screenshot: { icon: <Monitor size={12} />, color: '#7c6af7', label: 'Screen' },
@@ -39,8 +40,8 @@ export function ResultCard({ result, index }: Props) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2, delay: index * 0.04 }}
       onClick={() => setSelectedResult(result)}
-      className="group cursor-pointer rounded-2xl border p-4 transition-all hover:border-[var(--accent)]"
-      style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+      className="engram-card engram-card-hover group cursor-pointer rounded-[1.35rem] p-4 transition-transform hover:-translate-y-0.5"
+      style={{ background: 'var(--surface)' }}
     >
       {/* Thumbnail */}
       {result.thumb_path && result.source_type === 'screenshot' ? (
@@ -81,9 +82,16 @@ export function ResultCard({ result, index }: Props) {
       </div>
 
       {/* Content preview */}
-      <p className="mb-2 line-clamp-3 text-sm leading-relaxed" style={{ color: 'var(--text)' }}>
+      <p className="mb-2 line-clamp-3 text-sm leading-relaxed text-pretty" style={{ color: 'var(--text)' }}>
         {result.content_preview || result.window_title || result.url || '—'}
       </p>
+
+      {(result.concepts?.length || result.events?.length) ? (
+        <div className="mb-3 space-y-1.5">
+          <ConceptPills concepts={result.concepts} />
+          <EventPills events={result.events} />
+        </div>
+      ) : null}
 
       {/* Footer */}
       <div className="flex items-center justify-between">
@@ -91,7 +99,7 @@ export function ResultCard({ result, index }: Props) {
           {result.app_name || result.window_title || ''}
         </span>
         <span
-          className="rounded-full px-2 py-0.5 text-xs font-semibold"
+          className="rounded-full px-2 py-0.5 text-xs font-semibold tabular"
           style={{
             background: `color-mix(in srgb, var(--accent) 15%, transparent)`,
             color: 'var(--accent)',

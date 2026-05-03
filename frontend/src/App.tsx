@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Brain, Search, Clock, Settings, Zap, Bot, BarChart2, Lightbulb } from 'lucide-react'
+import { Brain, Search, Clock, Settings, Zap, Bot, BarChart2, Lightbulb, Sparkles } from 'lucide-react'
 import { SearchBar } from './components/SearchBar'
 import { ResultsGrid } from './components/ResultCard'
 import { FilterSidebar } from './components/FilterSidebar'
@@ -11,11 +11,12 @@ import { ChatView } from './components/ChatView'
 import { ActivityDashboard } from './components/ActivityDashboard'
 import { InsightsView } from './components/InsightsView'
 import { LockScreen } from './components/LockScreen'
+import { LearningView } from './components/LearningView'
 import { useStore } from './store/useStore'
 import { api, captureApi, authApi } from './api/client'
 import { sessionLogger } from './utils/sessionLogger'
 
-type NavItem = { id: 'search' | 'timeline' | 'chat' | 'activity' | 'insights' | 'settings'; label: string; icon: React.ReactNode }
+type NavItem = { id: 'search' | 'timeline' | 'chat' | 'activity' | 'insights' | 'learning' | 'settings'; label: string; icon: React.ReactNode }
 
 const NAV: NavItem[] = [
   { id: 'search',   label: 'Search',   icon: <Search size={16} /> },
@@ -23,6 +24,7 @@ const NAV: NavItem[] = [
   { id: 'timeline', label: 'Timeline', icon: <Clock size={16} /> },
   { id: 'activity', label: 'Activity', icon: <BarChart2 size={16} /> },
   { id: 'insights', label: 'Insights', icon: <Lightbulb size={16} /> },
+  { id: 'learning', label: 'Learning', icon: <Sparkles size={16} /> },
   { id: 'settings', label: 'Settings', icon: <Settings size={16} /> },
 ]
 
@@ -37,7 +39,7 @@ function StatusDot() {
 
   const pending = status?.pending_queue ?? 0
   return (
-    <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+    <div className="flex items-center gap-2 text-xs tabular" style={{ color: 'var(--text-muted)' }}>
       <span
         className="h-2 w-2 rounded-full"
         style={{ background: status?.daemon_running ? '#22c55e' : '#ef4444' }}
@@ -103,7 +105,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen flex-col" style={{ background: 'var(--bg)' }}>
+    <div className="flex h-[100dvh] flex-col" style={{ background: 'var(--bg)' }}>
       {/* Header */}
       <header
         className="flex items-center gap-4 border-b px-6 py-3 flex-shrink-0"
@@ -141,7 +143,7 @@ export default function App() {
         <button
           onClick={() => { sessionLogger.log('capture', 'manual_click'); captureApi.manual().catch(() => {}) }}
           title="Capture now (Ctrl+Shift+M)"
-          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors"
+          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 pl-3 pr-2.5 text-xs transition-colors"
           style={{ background: 'var(--surface-2)', color: 'var(--accent)' }}
         >
           <Zap size={12} />
@@ -161,7 +163,7 @@ export default function App() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.15 }}
-            className="h-full overflow-y-auto"
+          className="h-full overflow-y-auto"
           >
             {view === 'search' && (
               <div className="mx-auto max-w-6xl px-6 py-8">
@@ -194,6 +196,12 @@ export default function App() {
             {view === 'insights' && (
               <div className="mx-auto max-w-3xl px-6 py-8">
                 <InsightsView />
+              </div>
+            )}
+
+            {view === 'learning' && (
+              <div className="mx-auto max-w-5xl px-6 py-8">
+                <LearningView />
               </div>
             )}
 

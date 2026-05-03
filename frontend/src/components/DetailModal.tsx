@@ -4,6 +4,7 @@ import { X, Clock, Monitor, Clipboard, Globe, FileText, Mic, ExternalLink, Link2
 import { captureApi, relatedApi, type ContextResponse, type RelatedCapture } from '../api/client'
 import { useStore } from '../store/useStore'
 import { sessionLogger } from '../utils/sessionLogger'
+import { ConceptPills, EventPills } from './MemorySignals'
 
 const SOURCE_ICONS: Record<string, React.ReactNode> = {
   screenshot: <Monitor size={14} />,
@@ -34,6 +35,7 @@ export function DetailModal() {
   const [sidebarTab, setSidebarTab] = useState<'context' | 'related'>('context')
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!selectedResult) { setContext(null); setRelated([]); return }
     sessionLogger.log('detail', 'open', { captureId: selectedResult.capture_id, source: selectedResult.source_type })
     setLoadingCtx(true)
@@ -74,8 +76,8 @@ export function DetailModal() {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-x-4 top-12 bottom-4 z-50 mx-auto flex max-w-4xl flex-col overflow-hidden rounded-2xl border"
-            style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+            className="engram-card fixed inset-x-4 top-12 bottom-4 z-50 mx-auto flex max-w-4xl flex-col overflow-hidden rounded-[1.35rem]"
+            style={{ background: 'var(--surface)' }}
           >
             {/* Header */}
             <div className="flex items-center gap-3 border-b px-6 py-4" style={{ borderColor: 'var(--border)' }}>
@@ -105,7 +107,7 @@ export function DetailModal() {
               <div className="flex-1 overflow-y-auto p-6 space-y-4">
                 {/* Screenshot */}
                 {selectedResult.thumb_path && selectedResult.source_type === 'screenshot' && (
-                  <div className="overflow-hidden rounded-xl border" style={{ borderColor: 'var(--border)' }}>
+                  <div className="overflow-hidden rounded-xl" style={{ boxShadow: 'var(--shadow-border)' }}>
                     <img
                       src={`/thumbs/${encodeURIComponent(selectedResult.thumb_path.replace(/\\/g, '/'))}`}
                       alt="screenshot"
@@ -137,6 +139,31 @@ export function DetailModal() {
                     <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text)' }}>
                       {selectedResult.content_preview}
                     </p>
+                  </div>
+                )}
+
+                {((selectedResult.concepts?.length ?? 0) > 0 || (selectedResult.events?.length ?? 0) > 0) && (
+                  <div className="rounded-xl p-4" style={{ boxShadow: 'var(--shadow-border)', background: 'var(--surface-2)' }}>
+                    <p className="mb-3 text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
+                      Visual intelligence
+                    </p>
+                    <div className="space-y-3">
+                      <ConceptPills concepts={selectedResult.concepts} limit={8} />
+                      <EventPills events={selectedResult.events} limit={4} />
+                      {selectedResult.events?.some(e => e.changed_text?.trim()) && (
+                        <div>
+                          <p className="mb-1 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Changed text</p>
+                          {selectedResult.events
+                            ?.filter(e => e.changed_text?.trim())
+                            .slice(0, 2)
+                            .map(e => (
+                              <p key={e.id} className="text-xs whitespace-pre-wrap" style={{ color: 'var(--text)' }}>
+                                {e.changed_text}
+                              </p>
+                            ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -174,23 +201,30 @@ export function DetailModal() {
                     ) : context ? (
                       <div className="space-y-1">
                         {context.context.map(c => (
-                          <div
-                            key={c.capture_id}
-                            className="flex items-center gap-2 rounded-lg px-2 py-2 text-xs"
-                            style={{
-                              background: c.is_center ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent',
-                              borderLeft: c.is_center ? '2px solid var(--accent)' : '2px solid transparent',
-                            }}
-                          >
-                            <span style={{ color: SOURCE_COLORS[c.source_type] ?? 'var(--text-muted)', flexShrink: 0 }}>
-                              {SOURCE_ICONS[c.source_type]}
-                            </span>
-                            <span className="flex-1 truncate" style={{ color: c.is_center ? 'var(--text)' : 'var(--text-muted)' }}>
-                              {c.window_title || c.app_name || c.source_type}
-                            </span>
-                            <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>
-                              {new Date(c.timestamp + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
+                          <div key={c.capture_id}>
+                            <div
+                              className="flex items-center gap-2 rounded-lg px-2 py-2 text-xs"
+                              style={{
+                                background: c.is_center ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent',
+                                borderLeft: c.is_center ? '2px solid var(--accent)' : '2px solid transparent',
+                              }}
+                            >
+                              <span style={{ color: SOURCE_COLORS[c.source_type] ?? 'var(--text-muted)', flexShrink: 0 }}>
+                                {SOURCE_ICONS[c.source_type]}
+                              </span>
+                              <span className="flex-1 truncate" style={{ color: c.is_center ? 'var(--text)' : 'var(--text-muted)' }}>
+                                {c.window_title || c.app_name || c.source_type}
+                              </span>
+                              <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>
+                                {new Date(c.timestamp + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                            {(c.concepts?.length || c.events?.length) ? (
+                              <div className="ml-6 mb-1 space-y-1">
+                                <ConceptPills concepts={c.concepts} limit={1} />
+                                <EventPills events={c.events} limit={1} />
+                              </div>
+                            ) : null}
                           </div>
                         ))}
                       </div>
@@ -223,6 +257,12 @@ export function DetailModal() {
                             <p className="truncate" style={{ color: 'var(--text-muted)' }}>
                               {r.content_preview.slice(0, 60)}
                             </p>
+                            {(r.concepts?.length || r.events?.length) ? (
+                              <div className="space-y-1">
+                                <ConceptPills concepts={r.concepts} limit={1} />
+                                <EventPills events={r.events} limit={1} />
+                              </div>
+                            ) : null}
                             <div className="flex items-center justify-between">
                               <span style={{ color: 'var(--text-muted)' }}>
                                 {r.timestamp.slice(0, 10)}

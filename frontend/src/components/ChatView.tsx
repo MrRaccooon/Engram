@@ -43,26 +43,6 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
           <p className="whitespace-pre-wrap">{msg.content}</p>
         </div>
 
-        {/* Meta row */}
-        {msg.role === 'assistant' && (msg.model_used || msg.blocked_count !== undefined) && (
-          <div className="flex items-center gap-3 px-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-            {msg.model_used && msg.model_used !== 'none' && (
-              <span className="flex items-center gap-1">
-                <Zap size={10} />
-                {msg.model_used}
-              </span>
-            )}
-            {msg.passing_count !== undefined && (
-              <span className="flex items-center gap-1">
-                <ShieldCheck size={10} />
-                {msg.passing_count} sources · {msg.blocked_count ?? 0} blocked
-              </span>
-            )}
-            {msg.query_time_ms !== undefined && (
-              <span>{msg.query_time_ms}ms</span>
-            )}
-          </div>
-        )}
       </div>
     </motion.div>
   )
@@ -110,7 +90,7 @@ export function ChatView() {
 
   const [input, setInput] = useState('')
   const [deep, setDeep] = useState(false)
-  const [confirmEnabled, setConfirmEnabled] = useState(true)
+  const [confirmEnabled, setConfirmEnabled] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -335,7 +315,7 @@ export function ChatView() {
           </button>
         </div>
         <p className="mt-2 text-center text-xs" style={{ color: 'var(--text-muted)' }}>
-          Retrieval is 100% local · Only masked context reaches the AI
+          Retrieval is local-first · Turn review on when you want to inspect the prompt before sending
         </p>
       </div>
 

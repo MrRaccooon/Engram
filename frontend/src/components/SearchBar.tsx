@@ -48,10 +48,9 @@ export function SearchBar() {
   return (
     <div className="relative w-full max-w-3xl mx-auto">
       <div
-        className="flex items-center gap-3 rounded-2xl border px-5 py-4 transition-all"
+        className="engram-card flex items-center gap-3 rounded-[1.35rem] px-5 py-4 transition-[box-shadow]"
         style={{
           background: 'var(--surface)',
-          borderColor: 'var(--border)',
           boxShadow: '0 0 0 0 var(--accent)',
         }}
         onFocus={(e) => {
@@ -89,7 +88,7 @@ export function SearchBar() {
         <button
           onClick={() => runSearch(query)}
           title="Search (Enter)"
-          className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-colors"
+          className="flex items-center gap-2 rounded-xl px-4 py-2 pl-4 pr-3.5 text-sm font-medium transition-colors"
           style={{ background: 'var(--accent)', color: '#fff' }}
         >
           <Zap size={14} />

@@ -30,6 +30,7 @@ def enqueue(
     window_title: Optional[str] = None,
     app_name: Optional[str] = None,
     url: Optional[str] = None,
+    diff_data: Optional[str] = None,
 ) -> str:
     """
     Write a capture to SQLite and add it to the job_queue.
@@ -47,6 +48,7 @@ def enqueue(
         window_title=window_title or "",
         app_name=app_name or "",
         url=url or "",
+        diff_data=diff_data,
     )
     logger.debug(
         f"Enqueued [{source_type}] {capture_id[:8]} "

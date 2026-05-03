@@ -114,18 +114,42 @@ def _build_chroma_where(filters: AskFilters, pq: ParsedQuery | None = None) -> O
     if filters.source_types:
         conditions.append({"source_type": {"$in": filters.source_types}})
 
-    date_from = filters.date_from or (pq.date_from if pq else None)
-    date_to = filters.date_to or (pq.date_to if pq else None)
-
-    if date_from:
-        conditions.append({"timestamp": {"$gte": date_from}})
-    if date_to:
-        conditions.append({"timestamp": {"$lte": date_to + "T23:59:59"}})
     if len(conditions) == 1:
         return conditions[0]
     elif len(conditions) > 1:
         return {"$and": conditions}
     return None
+
+
+def _date_bounds(filters: AskFilters, pq: ParsedQuery | None = None) -> tuple[str | None, str | None]:
+    date_from = filters.date_from or (pq.date_from if pq else None)
+    date_to = filters.date_to or (pq.date_to if pq else None)
+    return date_from, date_to
+
+
+def _filter_candidates_by_date(
+    candidates: list[dict[str, Any]],
+    date_from: str | None,
+    date_to: str | None,
+) -> list[dict[str, Any]]:
+    """Apply temporal filters outside Chroma because Chroma rejects string range operands."""
+    if not date_from and not date_to:
+        return candidates
+
+    start = f"{date_from}T00:00:00" if date_from and "T" not in date_from else date_from
+    end = f"{date_to}T23:59:59" if date_to and "T" not in date_to else date_to
+
+    filtered: list[dict[str, Any]] = []
+    for item in candidates:
+        ts = item.get("timestamp") or ""
+        if not ts:
+            continue
+        if start and ts < start:
+            continue
+        if end and ts > end:
+            continue
+        filtered.append(item)
+    return filtered
 
 
 def _enrich_with_full_content(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -163,6 +187,8 @@ _SOURCE_WEIGHTS = {
     "temporal": 2.0,
     "tags":     1.3,
     "graph":    0.7,
+    "concepts": 1.2,
+    "events":   1.1,
 }
 
 
@@ -223,6 +249,7 @@ def _retrieve_candidates(
     pq = parse_query(query, known_tags=known_tags)
     retrieval_top_k = min(top_k * 5, 50)
     where = _build_chroma_where(filters, pq)
+    date_from, date_to = _date_bounds(filters, pq)
 
     ranked_lists: dict[str, list[dict[str, Any]]] = {}
 
@@ -279,12 +306,56 @@ def _retrieve_candidates(
         except Exception as exc:
             logger.debug(f"Tag retrieval failed: {exc}")
 
+    # 6) Concept vocabulary search
+    try:
+        from pipeline.concept_vocabulary import match_query_to_concepts
+        query_concepts = match_query_to_concepts(query, top_k=5, threshold=0.15)
+        if query_concepts:
+            concept_ids = [cid for cid, _, _ in query_concepts]
+            concept_rows = metadata_db.fetch_captures_by_concepts(concept_ids, limit=20)
+            concept_results: list[dict[str, Any]] = []
+            for row in concept_rows:
+                d = dict(row)
+                d["capture_id"] = d["id"]
+                concept_results.append(d)
+            if concept_results:
+                ranked_lists["concepts"] = concept_results
+    except Exception as exc:
+        logger.debug(f"Concept retrieval failed: {exc}")
+
+    # 7) Event-based retrieval (action events from differential analysis)
+    if pq.intent in ("activity", "recall", "locate", "temporal"):
+        try:
+            event_rows = metadata_db.search_events(
+                query_text=query,
+                time_start=pq.date_from,
+                time_end=pq.date_to,
+                app_name=pq.app_filters[0] if pq.app_filters else None,
+                limit=20,
+            )
+            if event_rows:
+                event_results: list[dict[str, Any]] = []
+                for row in event_rows:
+                    d = dict(row)
+                    d["capture_id"] = d.get("capture_id", d.get("id", ""))
+                    d["content_preview"] = (
+                        f"[{d.get('change_type', '')}] "
+                        f"{d.get('app_name', '')} — {d.get('window_title', '')}: "
+                        f"{(d.get('changed_text', '') or '')[:200]}"
+                    )
+                    d["source_type"] = "event"
+                    event_results.append(d)
+                ranked_lists["events"] = event_results
+        except Exception as exc:
+            logger.debug(f"Event retrieval failed: {exc}")
+
     sources_used = list(ranked_lists.keys())
     if insights:
         sources_used.append("insights")
 
     # Fuse all sources
     fused = _rrf_fuse(ranked_lists)
+    fused = _filter_candidates_by_date(fused, date_from, date_to)
 
     # Enrich with full content BEFORE reranking so the cross-encoder
     # scores on real text, not 300-char previews
@@ -307,7 +378,7 @@ def _retrieve_candidates(
     reranked = _remove_self_refs(reranked, query)
     reranked = _apply_recency(reranked)
 
-    # 6) Graph walk on top 3 results for context expansion
+    # 8) Graph walk on top 3 results for context expansion
     if len(reranked) >= 2:
         try:
             graph_additions: list[dict[str, Any]] = []

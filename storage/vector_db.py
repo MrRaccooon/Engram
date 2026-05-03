@@ -3,7 +3,7 @@ ChromaDB vector store.
 
 Two collections:
   text_embeddings   — float[384] from sentence-transformers (all-MiniLM-L6-v2)
-  visual_embeddings — float[512] from CLIP (ViT-B/32)
+  visual_embeddings — float[768] from CLIP (ViT-L/14)
 
 Both use cosine distance. Metadata stored alongside each vector enables
 filtering and result enrichment without a second DB round-trip.
@@ -76,6 +76,7 @@ def _is_recoverable_chroma_error(exc: Exception) -> bool:
         "nothing found on disk" in msg
         or "hnsw segment reader" in msg
         or "internal error" in msg
+        or "expecting embedding with dimension" in msg
     )
 
 
