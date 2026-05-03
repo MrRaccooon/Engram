@@ -83,6 +83,8 @@ def _get_clip():
             )
             # open_clip 3.x + torch 2.11 may load weights on meta device;
             # materialize to CPU so encode_image / encode_text actually work.
+            # Keep the original model as fallback in case weight reload fails.
+            _original_model = _clip_model
             try:
                 _clip_model = _clip_model.to_empty(device="cpu")
                 import open_clip as _oc
@@ -94,7 +96,8 @@ def _get_clip():
                     state = _torch.load(ckpt, map_location="cpu", weights_only=True)
                     _clip_model.load_state_dict(state, strict=False, assign=True)
             except Exception as meta_exc:
-                logger.warning(f"CLIP meta-device reload failed, using default weights: {meta_exc}")
+                _clip_model = _original_model
+                logger.info(f"CLIP using original pretrained weights (meta-device path skipped: {meta_exc})")
             _clip_model.eval()
             _clip_tokenizer = open_clip.get_tokenizer(_CLIP_MODEL_NAME)
             logger.info("CLIP model ready")
