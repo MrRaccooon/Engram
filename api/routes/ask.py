@@ -284,7 +284,7 @@ def _retrieve_candidates(
     # 6) Concept vocabulary search
     try:
         from pipeline.concept_vocabulary import match_query_to_concepts
-        query_concepts = match_query_to_concepts(query, top_k=5, threshold=0.18)
+        query_concepts = match_query_to_concepts(query, top_k=5, threshold=0.15)
         if query_concepts:
             concept_ids = [cid for cid, _, _ in query_concepts]
             concept_rows = metadata_db.fetch_captures_by_concepts(concept_ids, limit=20)
@@ -299,13 +299,13 @@ def _retrieve_candidates(
         logger.debug(f"Concept retrieval failed: {exc}")
 
     # 7) Event-based retrieval (action events from differential analysis)
-    if pq.intent in ("activity", "what_doing", "general", "recall"):
+    if pq.intent in ("activity", "recall", "locate", "temporal"):
         try:
             event_rows = metadata_db.search_events(
                 query_text=query,
                 time_start=pq.date_from,
                 time_end=pq.date_to,
-                app_name=pq.detected_apps[0] if pq.detected_apps else None,
+                app_name=pq.app_filters[0] if pq.app_filters else None,
                 limit=20,
             )
             if event_rows:
@@ -352,7 +352,7 @@ def _retrieve_candidates(
     reranked = _remove_self_refs(reranked, query)
     reranked = _apply_recency(reranked)
 
-    # 6) Graph walk on top 3 results for context expansion
+    # 8) Graph walk on top 3 results for context expansion
     if len(reranked) >= 2:
         try:
             graph_additions: list[dict[str, Any]] = []
