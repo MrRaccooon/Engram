@@ -127,8 +127,40 @@ def _build_capture_texts(session: list[Any], max_captures: int = 25) -> list[str
         text = cap["content"] or cap["window_title"] or ""
         app = (cap["app_name"] or "").replace(".exe", "")
         ts = (cap["timestamp"] or "")[:16]
+        cap_id = cap.get("id", "")
+
+        extras: list[str] = []
+
+        if cap_id:
+            try:
+                concept_rows = metadata_db.fetch_concepts_for_capture(cap_id, limit=5)
+                if concept_rows:
+                    concept_labels = [r["prompt"][:40] for r in concept_rows]
+                    extras.append(f"[concepts: {', '.join(concept_labels)}]")
+            except Exception:
+                pass
+
+            try:
+                event_rows = metadata_db.fetch_events_for_capture(cap_id, limit=3)
+                if event_rows:
+                    actions = []
+                    for ev in event_rows:
+                        ct = ev["change_type"] or ""
+                        ct_text = (ev["changed_text"] or "")[:80]
+                        if ct and ct != "idle":
+                            actions.append(f"{ct}: {ct_text}" if ct_text else ct)
+                    if actions:
+                        extras.append(f"[actions: {'; '.join(actions)}]")
+            except Exception:
+                pass
+
+        suffix = " ".join(extras)
         if text.strip():
-            capture_texts.append(f"[{ts}] {app}: {text[:400]}")
+            line = f"[{ts}] {app}: {text[:400]}"
+            if suffix:
+                line = f"{line} {suffix}"
+            capture_texts.append(line)
+
     return capture_texts
 
 
