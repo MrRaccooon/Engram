@@ -396,4 +396,5 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, _handle_exit)
 
     logger.info("Engram running. Press Ctrl+C to stop.")
-    signal.pause()
+    import threading
+    threading.Event().wait()
