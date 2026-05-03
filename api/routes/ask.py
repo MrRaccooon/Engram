@@ -163,6 +163,8 @@ _SOURCE_WEIGHTS = {
     "temporal": 2.0,
     "tags":     1.3,
     "graph":    0.7,
+    "concepts": 1.2,
+    "events":   1.1,
 }
 
 
@@ -278,6 +280,49 @@ def _retrieve_candidates(
                 ranked_lists["tags"] = tag_results
         except Exception as exc:
             logger.debug(f"Tag retrieval failed: {exc}")
+
+    # 6) Concept vocabulary search
+    try:
+        from pipeline.concept_vocabulary import match_query_to_concepts
+        query_concepts = match_query_to_concepts(query, top_k=5, threshold=0.18)
+        if query_concepts:
+            concept_ids = [cid for cid, _, _ in query_concepts]
+            concept_rows = metadata_db.fetch_captures_by_concepts(concept_ids, limit=20)
+            concept_results: list[dict[str, Any]] = []
+            for row in concept_rows:
+                d = dict(row)
+                d["capture_id"] = d["id"]
+                concept_results.append(d)
+            if concept_results:
+                ranked_lists["concepts"] = concept_results
+    except Exception as exc:
+        logger.debug(f"Concept retrieval failed: {exc}")
+
+    # 7) Event-based retrieval (action events from differential analysis)
+    if pq.intent in ("activity", "what_doing", "general", "recall"):
+        try:
+            event_rows = metadata_db.search_events(
+                query_text=query,
+                time_start=pq.date_from,
+                time_end=pq.date_to,
+                app_name=pq.detected_apps[0] if pq.detected_apps else None,
+                limit=20,
+            )
+            if event_rows:
+                event_results: list[dict[str, Any]] = []
+                for row in event_rows:
+                    d = dict(row)
+                    d["capture_id"] = d.get("capture_id", d.get("id", ""))
+                    d["content_preview"] = (
+                        f"[{d.get('change_type', '')}] "
+                        f"{d.get('app_name', '')} — {d.get('window_title', '')}: "
+                        f"{(d.get('changed_text', '') or '')[:200]}"
+                    )
+                    d["source_type"] = "event"
+                    event_results.append(d)
+                ranked_lists["events"] = event_results
+        except Exception as exc:
+            logger.debug(f"Event retrieval failed: {exc}")
 
     sources_used = list(ranked_lists.keys())
     if insights:
