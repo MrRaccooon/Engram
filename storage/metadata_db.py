@@ -35,18 +35,24 @@ _MIGRATIONS = [
 
 def _run_migrations(conn: sqlite3.Connection) -> None:
     """Add new columns to existing tables if they're missing."""
-    try:
-        existing = {
-            row[1] for row in conn.execute("PRAGMA table_info(insights)").fetchall()
-        }
-    except Exception:
-        return
+    table_columns: dict[str, set[str]] = {}
+
+    def _cols(table: str) -> set[str]:
+        if table not in table_columns:
+            try:
+                table_columns[table] = {
+                    row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+                }
+            except Exception:
+                table_columns[table] = set()
+        return table_columns[table]
 
     for col_name, sql in _MIGRATIONS:
-        if col_name not in existing:
+        target_table = "captures" if "captures" in sql else "insights"
+        if col_name not in _cols(target_table):
             try:
                 conn.execute(sql)
-                logger.debug(f"Migration: added column insights.{col_name}")
+                logger.debug(f"Migration: added column {target_table}.{col_name}")
             except Exception:
                 pass
 
@@ -342,13 +348,13 @@ def fetch_captures_in_window(
             """
             SELECT * FROM captures
             WHERE timestamp BETWEEN
-                datetime(?, ?, '-' || ? || ' minutes')
+                datetime(?, '-' || ? || ' minutes')
                 AND
-                datetime(?, ?, '+' || ? || ' minutes')
+                datetime(?, '+' || ? || ' minutes')
             ORDER BY timestamp ASC
             """,
-            (center_ts, center_ts, window_minutes,
-             center_ts, center_ts, window_minutes),
+            (center_ts, str(window_minutes),
+             center_ts, str(window_minutes)),
         ).fetchall()
     return rows
 
