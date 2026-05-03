@@ -343,18 +343,16 @@ def fetch_captures_in_window(
     center_ts: str, window_minutes: int = 5
 ) -> list[sqlite3.Row]:
     """Return all captures within ±window_minutes of center_ts (ISO format)."""
+    minus_mod = f"-{window_minutes} minutes"
+    plus_mod = f"+{window_minutes} minutes"
     with _connect() as conn:
         rows = conn.execute(
             """
             SELECT * FROM captures
-            WHERE timestamp BETWEEN
-                datetime(?, '-' || ? || ' minutes')
-                AND
-                datetime(?, '+' || ? || ' minutes')
+            WHERE datetime(timestamp) BETWEEN datetime(?, ?) AND datetime(?, ?)
             ORDER BY timestamp ASC
             """,
-            (center_ts, str(window_minutes),
-             center_ts, str(window_minutes)),
+            (center_ts, minus_mod, center_ts, plus_mod),
         ).fetchall()
     return rows
 
