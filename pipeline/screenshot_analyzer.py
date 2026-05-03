@@ -100,15 +100,36 @@ def _detect_content_type(text: str, window_title: str = "", app_name: str = "") 
     app_lower = (app_name or "").lower()
     title_lower = (window_title or "").lower()
 
+    # IDE / code editor apps — detect as code (or mixed if terminal signals present)
+    _CODE_APPS = ("code", "cursor", "pycharm", "intellij", "webstorm", "rider",
+                  "clion", "goland", "phpstorm", "rustrover", "fleet",
+                  "sublime", "atom", "notepad++", "vim", "nvim", "neovim", "emacs")
+    if any(k in app_lower for k in _CODE_APPS):
+        term_score = sum(1 for p in _TERMINAL_SIGNALS if re.search(p, text, re.MULTILINE))
+        if term_score >= 2:
+            return "mixed"
+        return "code"
+
     # Terminal apps always produce terminal content
-    _TERMINAL_APPS = ("terminal", "cmd", "powershell", "bash", "wt", "conhost", "alacritty")
+    _TERMINAL_APPS = ("terminal", "cmd", "powershell", "bash", "wt", "conhost",
+                      "alacritty", "wezterm", "kitty", "iterm", "mintty")
     if any(k in app_lower for k in _TERMINAL_APPS):
         return "terminal"
 
     # Browser apps
-    _BROWSER_APPS = ("brave", "chrome", "firefox", "edge", "safari", "opera", "vivaldi")
+    _BROWSER_APPS = ("brave", "chrome", "firefox", "edge", "safari", "opera", "vivaldi", "arc")
     if any(k in app_lower for k in _BROWSER_APPS):
         return "browser"
+
+    # Communication apps
+    _CHAT_APPS = ("whatsapp", "telegram", "discord", "slack", "teams", "signal", "messenger")
+    if any(k in app_lower for k in _CHAT_APPS):
+        return "browser"
+
+    # Design apps
+    _DESIGN_APPS = ("figma", "sketch", "adobe", "photoshop", "illustrator", "canva")
+    if any(k in app_lower for k in _DESIGN_APPS):
+        return "document"
 
     # Score each type
     term_score = sum(1 for p in _TERMINAL_SIGNALS if re.search(p, text, re.MULTILINE))

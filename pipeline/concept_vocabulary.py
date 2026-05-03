@@ -186,22 +186,31 @@ def tag_screenshot(
 
 
 def match_query_to_concepts(
-    query: str, top_k: int = 5, threshold: float = 0.18,
+    query: str, top_k: int = 5, threshold: float = 0.40,
 ) -> list[tuple[str, str, float]]:
     """
-    Match a text query against the concept vocabulary via CLIP text→text
-    similarity. Used at retrieval time to find concept-tagged captures.
+    Match a text query against concept prompts via MiniLM text embeddings.
+
+    CLIP text-to-text similarity is nearly uniform for English sentences,
+    so we use MiniLM (384-dim) for semantic text matching instead.
+    Concept prompts are embedded on-the-fly (cheap, ~300 prompts).
     """
-    if _concept_matrix is None or len(_concept_ids) == 0:
+    if not _concept_prompts:
         return []
 
     from pipeline import embedder
-    query_vec = embedder.embed_query_text_clip(query)
+
+    query_vec = embedder.embed_text(query)
     if not query_vec:
         return []
 
+    prompt_vecs = embedder.embed_texts(_concept_prompts)
+    if not prompt_vecs:
+        return []
+
     qv = np.array(query_vec, dtype=np.float32)
-    scores = _concept_matrix @ qv
+    pm = np.array(prompt_vecs, dtype=np.float32)
+    scores = pm @ qv
 
     indices = np.where(scores >= threshold)[0]
     if len(indices) == 0:
