@@ -116,36 +116,32 @@ def _process_capture(row) -> None:
 
     # ── 0b. Differential capture event ──────────────────────────────────────
     diff_data_raw: str = row["diff_data"] or "" if "diff_data" in row.keys() else ""
+    _diff_parsed: dict | None = None
     if diff_data_raw:
         try:
             import json as _json
-            diff_data = _json.loads(diff_data_raw)
+            _diff_parsed = _json.loads(diff_data_raw)
             metadata_db.insert_capture_event(
                 capture_id=capture_id,
-                prev_capture_id=diff_data.get("prev_capture_id"),
-                change_type=diff_data.get("change_type", "unknown"),
-                change_magnitude=float(diff_data.get("change_magnitude", 0)),
-                changed_text=diff_data.get("changed_text", ""),
+                prev_capture_id=_diff_parsed.get("prev_capture_id"),
+                change_type=_diff_parsed.get("change_type", "unknown"),
+                change_magnitude=float(_diff_parsed.get("change_magnitude", 0)),
+                changed_text=_diff_parsed.get("changed_text", ""),
                 window_title=window_title,
                 app_name=app_name,
                 timestamp=timestamp,
             )
         except Exception as exc:
             logger.debug(f"Diff event skipped for {capture_id[:8]}: {exc}")
-        diff_data = None  # free memory
 
     # ── 1. Extract text ───────────────────────────────────────────────────────
     text = content
 
-    if diff_data_raw:
-        try:
-            import json as _json2
-            dd = _json2.loads(diff_data_raw)
-            changed = dd.get("changed_text", "")
-            if changed and changed.strip():
-                text = f"{text}\nCHANGED: {changed.strip()}" if text.strip() else f"CHANGED: {changed.strip()}"
-        except Exception:
-            pass
+    if _diff_parsed:
+        changed = _diff_parsed.get("changed_text", "")
+        if changed and changed.strip():
+            text = f"{text}\nCHANGED: {changed.strip()}" if text.strip() else f"CHANGED: {changed.strip()}"
+    _diff_parsed = None
 
     if source_type == "screenshot":
         # Parse window title into structured context for richer searchable text
@@ -236,6 +232,7 @@ def _process_capture(row) -> None:
             )
 
     # ── 3. Visual (CLIP) embed for screenshots ────────────────────────────────
+    visual_vec = None
     if source_type == "screenshot" and thumb_path and Path(thumb_path).is_file():
         visual_vec = embedder.embed_image_path(thumb_path)
         if visual_vec:
