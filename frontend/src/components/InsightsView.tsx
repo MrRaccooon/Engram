@@ -17,19 +17,49 @@ function TopicPill({ topic }: { topic: string }) {
   )
 }
 
+function parseList(raw?: string | null): string[] {
+  if (!raw) return []
+  try {
+    const value = JSON.parse(raw)
+    if (Array.isArray(value)) return value.map(String).filter(Boolean)
+  } catch { /* ignore */ }
+  return raw.split('\n').map(s => s.replace(/^[-*]\s*/, '').trim()).filter(Boolean)
+}
+
+function DetailList({ title, items }: { title: string; items: string[] }) {
+  if (items.length === 0) return null
+  return (
+    <div>
+      <p className="text-xs font-medium mb-1.5" style={{ color: 'var(--text-muted)' }}>{title}</p>
+      <ul className="space-y-1">
+        {items.slice(0, 8).map((item, idx) => (
+          <li key={`${title}-${idx}`} className="text-xs leading-relaxed" style={{ color: 'var(--text)' }}>
+            {item}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function InsightCard({ insight }: { insight: InsightEntry }) {
   const [expanded, setExpanded] = useState(false)
 
   let topics: string[] = []
   try { topics = JSON.parse(insight.topics || '[]') } catch { /* ignore */ }
+  const projects = parseList(insight.projects)
+  const filesTouched = parseList(insight.files_touched)
+  const decisions = parseList(insight.decisions)
+  const problems = parseList(insight.problems)
+  const outcomes = parseList(insight.outcomes)
 
   const startTime = insight.session_start.slice(11, 16)
   const endTime = insight.session_end.slice(11, 16)
 
   return (
     <div
-      className="rounded-2xl border overflow-hidden transition-all"
-      style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
+      className="engram-card engram-card-hover rounded-[1.35rem] overflow-hidden transition-transform hover:-translate-y-0.5"
+      style={{ background: 'var(--surface)' }}
     >
       <button
         className="flex w-full items-start gap-4 px-5 py-4 text-left transition-colors hover:bg-[var(--surface-2)]"
@@ -47,8 +77,8 @@ function InsightCard({ insight }: { insight: InsightEntry }) {
 
         {/* Content */}
         <div className="flex-1 min-w-0">
-          <p className="text-sm leading-relaxed" style={{ color: 'var(--text)' }}>
-            {insight.summary}
+          <p className="text-sm leading-relaxed text-pretty" style={{ color: 'var(--text)' }}>
+            {insight.narrative || insight.summary}
           </p>
           {topics.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-2">
@@ -75,6 +105,13 @@ function InsightCard({ insight }: { insight: InsightEntry }) {
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
             Consolidated: {new Date(insight.consolidated_at + 'Z').toLocaleString()}
           </p>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <DetailList title="Projects" items={projects} />
+            <DetailList title="Files touched" items={filesTouched} />
+            <DetailList title="Decisions" items={decisions} />
+            <DetailList title="Problems" items={problems} />
+            <DetailList title="Outcomes" items={outcomes} />
+          </div>
           {topics.length > 0 && (
             <div className="mt-3">
               <p className="text-xs font-medium mb-1.5" style={{ color: 'var(--text-muted)' }}>
@@ -127,7 +164,10 @@ export function InsightsView() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    load()
+  }, [])
 
   const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const d = e.target.value
@@ -184,8 +224,8 @@ export function InsightsView() {
         </div>
       ) : insights.length === 0 ? (
         <div
-          className="flex flex-col items-center gap-4 rounded-2xl border p-12 text-center"
-          style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
+          className="engram-card flex flex-col items-center gap-4 rounded-[1.35rem] p-12 text-center"
+          style={{ background: 'var(--surface)' }}
         >
           <div
             className="flex h-16 w-16 items-center justify-center rounded-2xl"

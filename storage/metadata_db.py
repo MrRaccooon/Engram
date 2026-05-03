@@ -65,6 +65,7 @@ def init(db_path: Path) -> None:
     with _connect() as conn:
         conn.executescript(_SCHEMA_SQL)
         _run_migrations(conn)
+        conn.executescript(_POST_MIGRATION_INDEX_SQL)
     logger.info(f"SQLite metadata DB ready at {db_path}")
 
 
@@ -135,7 +136,6 @@ CREATE TABLE IF NOT EXISTS insights (
 );
 
 CREATE INDEX IF NOT EXISTS idx_insights_date ON insights(date);
-CREATE INDEX IF NOT EXISTS idx_insights_type ON insights(consolidation_type);
 
 -- Topic threads: accumulated knowledge across sessions
 CREATE TABLE IF NOT EXISTS topic_threads (
@@ -243,6 +243,11 @@ CREATE TABLE IF NOT EXISTS eval_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_eval_log_created ON eval_log(created_at);
+"""
+
+
+_POST_MIGRATION_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_insights_type ON insights(consolidation_type);
 """
 
 

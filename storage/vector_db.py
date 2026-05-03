@@ -76,6 +76,7 @@ def _is_recoverable_chroma_error(exc: Exception) -> bool:
         "nothing found on disk" in msg
         or "hnsw segment reader" in msg
         or "internal error" in msg
+        or "expecting embedding with dimension" in msg
     )
 
 

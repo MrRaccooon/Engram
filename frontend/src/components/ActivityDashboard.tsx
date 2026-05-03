@@ -17,7 +17,7 @@ function AppBar({ app, seconds, max }: { app: string; seconds: number; max: numb
         <span className="font-medium truncate max-w-[180px]" style={{ color: 'var(--text)' }} title={app}>
           {app}
         </span>
-        <span style={{ color: 'var(--text-muted)' }}>{fmt(seconds)}</span>
+        <span className="tabular" style={{ color: 'var(--text-muted)' }}>{fmt(seconds)}</span>
       </div>
       <div className="h-2 rounded-full overflow-hidden" style={{ background: 'var(--surface-2)' }}>
         <div
@@ -88,7 +88,7 @@ function HeatmapGrid({ cells }: { cells: HeatmapCell[] }) {
 
 function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border p-6 space-y-4" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+    <div className="engram-card rounded-[1.35rem] p-6 space-y-4" style={{ background: 'var(--surface)' }}>
       <div className="flex items-center gap-2">
         <span style={{ color: 'var(--accent)' }}>{icon}</span>
         <h2 className="font-semibold" style={{ color: 'var(--text)' }}>{title}</h2>
@@ -99,8 +99,15 @@ function Section({ title, icon, children }: { title: string; icon: React.ReactNo
 }
 
 export function ActivityDashboard() {
-  const today = new Date().toISOString().split('T')[0]
-  const weekAgo = new Date(Date.now() - 7 * 86400_000).toISOString().split('T')[0]
+  const [{ today, weekAgo }] = useState(() => {
+    const now = new Date()
+    const prev = new Date(now)
+    prev.setDate(now.getDate() - 7)
+    return {
+      today: now.toISOString().split('T')[0],
+      weekAgo: prev.toISOString().split('T')[0],
+    }
+  })
 
   const [apps, setApps] = useState<AppTimeEntry[]>([])
   const [sessions, setSessions] = useState<FocusSession[]>([])
@@ -109,13 +116,14 @@ export function ActivityDashboard() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
     sessionLogger.log('activity', 'load')
     Promise.all([
       activityApi.apps(weekAgo, today).then(d => { setApps(d.totals); sessionLogger.log('activity', 'apps_loaded', { count: d.totals.length }) }),
       activityApi.heatmap(4).then(d => { setHeatmap(d.cells); sessionLogger.log('activity', 'heatmap_loaded', { cells: d.cells.length }) }),
     ]).finally(() => setLoading(false))
-  }, [])
+  }, [today, weekAgo])
 
   useEffect(() => {
     sessionLogger.log('activity', 'focus_date', { date: selectedDate })
@@ -134,19 +142,20 @@ export function ActivityDashboard() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-16">
-          <div className="flex gap-1">
-            {[0, 1, 2].map(i => (
-              <div
-                key={i}
-                className="h-2 w-2 rounded-full"
-                style={{
-                  background: 'var(--accent)',
-                  animation: `pulse 1.2s ${i * 0.2}s ease-in-out infinite`,
-                }}
-              />
-            ))}
-          </div>
+        <div className="space-y-4">
+          {[0, 1, 2].map(i => (
+            <div key={i} className="rounded-[1.35rem] p-6" style={{ background: 'var(--surface)' }}>
+              <div className="mb-5 flex items-center gap-2">
+                <div className="skeleton h-4 w-4 rounded" />
+                <div className="skeleton h-4 w-40 rounded" />
+              </div>
+              <div className="space-y-3">
+                <div className="skeleton h-3 w-full rounded" />
+                <div className="skeleton h-3 w-5/6 rounded" />
+                <div className="skeleton h-3 w-2/3 rounded" />
+              </div>
+            </div>
+          ))}
         </div>
       ) : (
         <>
@@ -194,7 +203,7 @@ export function ActivityDashboard() {
                     style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}
                   >
                     <div
-                      className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl text-xs font-bold"
+                      className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl text-xs font-bold tabular"
                       style={{ background: 'color-mix(in srgb, var(--accent) 15%, transparent)', color: 'var(--accent)' }}
                     >
                       {Math.round(s.duration_minutes)}m

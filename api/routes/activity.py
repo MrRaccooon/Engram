@@ -17,7 +17,7 @@ GET /api/activity/heatmap?weeks=4
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Query
@@ -27,7 +27,7 @@ from storage.metadata_db import _connect
 
 router = APIRouter(tags=["activity"])
 
-_SCREENSHOT_INTERVAL_S = 30  # assumed capture cadence for time estimation
+_MAX_SESSION_GAP_S = 5 * 60
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -43,40 +43,41 @@ async def app_time(
     from_date: str = Query(..., alias="from", description="YYYY-MM-DD"),
     to_date: str = Query(..., alias="to", description="YYYY-MM-DD"),
 ) -> dict[str, Any]:
-    """
-    Return estimated time per app (in seconds) for the given date range.
-    Time is estimated as capture_count × screenshot_interval.
-    """
+    """Return estimated time per app using actual gaps between captures."""
     ts_from, ts_to = _date_range(from_date, to_date)
 
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT
-                app_name,
-                COUNT(*) AS capture_count,
-                COUNT(*) * ? AS estimated_seconds,
-                date(timestamp) AS day
+            SELECT timestamp, app_name, date(timestamp) AS day
             FROM captures
             WHERE timestamp BETWEEN ? AND ?
               AND source_type = 'screenshot'
               AND app_name IS NOT NULL
               AND app_name != ''
               AND status = 'indexed'
-            GROUP BY app_name, day
-            ORDER BY day ASC, estimated_seconds DESC
+            ORDER BY timestamp ASC
             """,
-            (_SCREENSHOT_INTERVAL_S, ts_from, ts_to),
+            (ts_from, ts_to),
         ).fetchall()
 
-    # Aggregate by app across all days
+    # Aggregate by app across all days. Estimate each capture's duration from the
+    # gap until the next screenshot, capped so idle periods do not dominate.
     by_app: dict[str, int] = {}
     daily: dict[str, dict[str, int]] = {}  # day → {app: seconds}
 
-    for row in rows:
+    def _parse(ts: str) -> datetime:
+        return datetime.fromisoformat(ts)
+
+    for idx, row in enumerate(rows):
         app = row["app_name"]
-        secs = row["estimated_seconds"]
         day = row["day"]
+        if idx + 1 < len(rows):
+            gap = (_parse(rows[idx + 1]["timestamp"]) - _parse(row["timestamp"])).total_seconds()
+            secs = int(max(1, min(gap, _MAX_SESSION_GAP_S)))
+        else:
+            secs = 0
+
         by_app[app] = by_app.get(app, 0) + secs
         if day not in daily:
             daily[day] = {}

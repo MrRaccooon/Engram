@@ -50,6 +50,8 @@ class CaptureResult(BaseModel):
     url: str
     relevance_score: float
     chunk_index: int = 0
+    concepts: list[dict[str, Any]] = Field(default_factory=list)
+    events: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SearchResponse(BaseModel):
@@ -61,7 +63,7 @@ class SearchResponse(BaseModel):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _build_chroma_where(filters: SearchFilters) -> Optional[dict]:
-    """Translate SearchFilters into a ChromaDB $and/$or where clause."""
+    """Translate filters Chroma can safely apply into a where clause."""
     conditions = []
 
     if filters.source_types:
@@ -70,17 +72,29 @@ def _build_chroma_where(filters: SearchFilters) -> Optional[dict]:
     if filters.apps:
         conditions.append({"app_name": {"$in": filters.apps}})
 
-    if filters.date_from:
-        conditions.append({"timestamp": {"$gte": filters.date_from}})
-
-    if filters.date_to:
-        conditions.append({"timestamp": {"$lte": filters.date_to + "T23:59:59"}})
-
     if not conditions:
         return None
     if len(conditions) == 1:
         return conditions[0]
     return {"$and": conditions}
+
+
+def _filter_by_date(results: list[dict], filters: SearchFilters) -> list[dict]:
+    """Apply date filtering outside Chroma because string range filters are invalid there."""
+    if not filters.date_from and not filters.date_to:
+        return results
+
+    start = f"{filters.date_from}T00:00:00" if filters.date_from else None
+    end = f"{filters.date_to}T23:59:59" if filters.date_to else None
+    filtered = []
+    for result in results:
+        ts = result.get("timestamp") or ""
+        if start and ts < start:
+            continue
+        if end and ts > end:
+            continue
+        filtered.append(result)
+    return filtered
 
 
 def _dedupe_by_capture(results: list[dict]) -> list[dict]:
@@ -94,6 +108,39 @@ def _dedupe_by_capture(results: list[dict]) -> list[dict]:
         if cid not in seen or r.get("rerank_score", r.get("score", 0)) > seen[cid].get("rerank_score", seen[cid].get("score", 0)):
             seen[cid] = r
     return list(seen.values())
+
+
+def _memory_signals(capture_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return visual concepts and action events for a capture."""
+    try:
+        concept_rows = metadata_db.fetch_concepts_for_capture(capture_id, limit=6)
+        concepts = [
+            {
+                "id": r["id"],
+                "prompt": r["prompt"],
+                "category": r["category"],
+                "confidence": round(float(r["confidence"]), 4),
+            }
+            for r in concept_rows
+        ]
+    except Exception:
+        concepts = []
+
+    try:
+        event_rows = metadata_db.fetch_events_for_capture(capture_id, limit=3)
+        events = [
+            {
+                "id": r["id"],
+                "change_type": r["change_type"],
+                "change_magnitude": round(float(r["change_magnitude"]), 4),
+                "changed_text": r["changed_text"] or "",
+            }
+            for r in event_rows
+        ]
+    except Exception:
+        events = []
+
+    return concepts, events
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -127,6 +174,7 @@ async def search(req: SearchRequest) -> SearchResponse:
             all_candidates_map[r["id"]] = r
 
     all_candidates = list(all_candidates_map.values())
+    all_candidates = _filter_by_date(all_candidates, req.filters)
     total_candidates = len(all_candidates)
 
     if not all_candidates:
@@ -150,18 +198,21 @@ async def search(req: SearchRequest) -> SearchResponse:
     for r in top_results:
         capture_id = r.get("capture_id", "")
         row = metadata_db.fetch_capture_by_id(capture_id) if capture_id else None
+        concepts, events = _memory_signals(capture_id) if capture_id else ([], [])
         response_items.append(
             CaptureResult(
                 capture_id=capture_id,
                 source_type=r.get("source_type", ""),
                 timestamp=r.get("timestamp", ""),
-                content_preview=r.get("content_preview", ""),
+                content_preview=(row["content"] if row and row["content"] else r.get("content_preview", ""))[:600],
                 thumb_path=row["thumb_path"] if row else r.get("thumb_path"),
-                window_title=r.get("window_title", ""),
-                app_name=r.get("app_name", ""),
-                url=r.get("url", ""),
+                window_title=row["window_title"] if row else r.get("window_title", ""),
+                app_name=row["app_name"] if row else r.get("app_name", ""),
+                url=row["url"] if row else r.get("url", ""),
                 relevance_score=round(r.get("rerank_score", r.get("score", 0)), 4),
                 chunk_index=r.get("chunk_index", 0),
+                concepts=concepts,
+                events=events,
             )
         )
 
@@ -197,6 +248,8 @@ async def related(capture_id: str, limit: int = Query(default=5, ge=1, le=20)) -
             "url": r.get("url", ""),
             "similarity": r.get("similarity", 0),
             "edge_type": r.get("edge_type", "semantic"),
+            "concepts": _memory_signals(r.get("id", ""))[0] if r.get("id") else [],
+            "events": _memory_signals(r.get("id", ""))[1] if r.get("id") else [],
         }
         for r in results
     ]
@@ -218,12 +271,14 @@ async def timeline(date: str = Query(..., description="Date in YYYY-MM-DD format
             "capture_id": r["id"],
             "source_type": r["source_type"],
             "timestamp": r["timestamp"],
-            "content_preview": (r["content"] or "")[:200],
+            "content_preview": (r["content"] or "")[:500],
             "thumb_path": r["thumb_path"],
             "window_title": r["window_title"],
             "app_name": r["app_name"],
             "url": r["url"],
             "status": r["status"],
+            "concepts": _memory_signals(r["id"])[0],
+            "events": _memory_signals(r["id"])[1],
         }
         for r in rows
     ]

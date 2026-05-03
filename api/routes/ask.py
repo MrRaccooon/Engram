@@ -114,18 +114,42 @@ def _build_chroma_where(filters: AskFilters, pq: ParsedQuery | None = None) -> O
     if filters.source_types:
         conditions.append({"source_type": {"$in": filters.source_types}})
 
-    date_from = filters.date_from or (pq.date_from if pq else None)
-    date_to = filters.date_to or (pq.date_to if pq else None)
-
-    if date_from:
-        conditions.append({"timestamp": {"$gte": date_from}})
-    if date_to:
-        conditions.append({"timestamp": {"$lte": date_to + "T23:59:59"}})
     if len(conditions) == 1:
         return conditions[0]
     elif len(conditions) > 1:
         return {"$and": conditions}
     return None
+
+
+def _date_bounds(filters: AskFilters, pq: ParsedQuery | None = None) -> tuple[str | None, str | None]:
+    date_from = filters.date_from or (pq.date_from if pq else None)
+    date_to = filters.date_to or (pq.date_to if pq else None)
+    return date_from, date_to
+
+
+def _filter_candidates_by_date(
+    candidates: list[dict[str, Any]],
+    date_from: str | None,
+    date_to: str | None,
+) -> list[dict[str, Any]]:
+    """Apply temporal filters outside Chroma because Chroma rejects string range operands."""
+    if not date_from and not date_to:
+        return candidates
+
+    start = f"{date_from}T00:00:00" if date_from and "T" not in date_from else date_from
+    end = f"{date_to}T23:59:59" if date_to and "T" not in date_to else date_to
+
+    filtered: list[dict[str, Any]] = []
+    for item in candidates:
+        ts = item.get("timestamp") or ""
+        if not ts:
+            continue
+        if start and ts < start:
+            continue
+        if end and ts > end:
+            continue
+        filtered.append(item)
+    return filtered
 
 
 def _enrich_with_full_content(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -225,6 +249,7 @@ def _retrieve_candidates(
     pq = parse_query(query, known_tags=known_tags)
     retrieval_top_k = min(top_k * 5, 50)
     where = _build_chroma_where(filters, pq)
+    date_from, date_to = _date_bounds(filters, pq)
 
     ranked_lists: dict[str, list[dict[str, Any]]] = {}
 
@@ -330,6 +355,7 @@ def _retrieve_candidates(
 
     # Fuse all sources
     fused = _rrf_fuse(ranked_lists)
+    fused = _filter_candidates_by_date(fused, date_from, date_to)
 
     # Enrich with full content BEFORE reranking so the cross-encoder
     # scores on real text, not 300-char previews

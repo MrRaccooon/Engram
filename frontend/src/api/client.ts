@@ -56,6 +56,22 @@ export interface CaptureResult {
   url: string
   relevance_score: number
   chunk_index: number
+  concepts?: ConceptSignal[]
+  events?: EventSignal[]
+}
+
+export interface ConceptSignal {
+  id: string
+  prompt: string
+  category: string
+  confidence: number
+}
+
+export interface EventSignal {
+  id: string
+  change_type: string
+  change_magnitude: number
+  changed_text: string
 }
 
 export interface SearchFilters {
@@ -73,7 +89,7 @@ export interface SearchResponse {
 
 export interface TimelineCapture {
   capture_id: string
-  source_type: string
+  source_type: 'screenshot' | 'clipboard' | 'url' | 'file' | 'audio'
   timestamp: string
   content_preview: string
   thumb_path: string | null
@@ -81,6 +97,8 @@ export interface TimelineCapture {
   app_name: string
   url: string
   status: string
+  concepts?: ConceptSignal[]
+  events?: EventSignal[]
 }
 
 export interface ContextResponse {
@@ -162,6 +180,8 @@ export interface RelatedCapture {
   url: string
   similarity: number
   edge_type: string
+  concepts?: ConceptSignal[]
+  events?: EventSignal[]
 }
 
 export const askApi = {
@@ -211,6 +231,22 @@ export const activityApi = {
 export interface InsightEntry {
   id: string; date: string; session_start: string; session_end: string
   summary: string; topics: string; consolidated_at: string
+  narrative?: string | null; topics_structured?: string | null; projects?: string | null
+  files_touched?: string | null; decisions?: string | null; problems?: string | null
+  outcomes?: string | null; consolidation_type?: string
+}
+
+export interface LearningTopic {
+  id: string
+  topic: string
+  summary: string
+  total_sessions: number
+  total_minutes: number
+  projects?: string | null
+  files_touched?: string | null
+  decisions?: string | null
+  last_updated: string
+  created_at: string
 }
 
 export const insightsApi = {
@@ -221,6 +257,9 @@ export const insightsApi = {
 
   latest: () =>
     api.get<{ insight: InsightEntry | null }>('/insights/latest').then(r => r.data),
+
+  learning: () =>
+    api.get<{ topics: LearningTopic[]; count: number }>('/learning/summary').then(r => r.data),
 }
 
 // ── Auth (Phase 6) ────────────────────────────────────────────────────────────

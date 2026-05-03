@@ -2,28 +2,105 @@
 
 @layer base {
   :root {
-    --bg: #0a0a0f;
-    --surface: #13131a;
-    --surface-2: #1c1c27;
-    --border: #2a2a3d;
-    --text: #e2e2f0;
-    --text-muted: #7b7b9d;
-    --accent: #7c6af7;
-    --accent-hover: #9180ff;
+    --bg: #0d1014;
+    --surface: #151922;
+    --surface-2: #202636;
+    --border: rgba(230, 238, 255, 0.1);
+    --text: #edf1f7;
+    --text-muted: #8b95a7;
+    --accent: #7d8cf8;
+    --accent-hover: #98a4ff;
     --success: #4ade80;
     --warning: #fbbf24;
+    --shadow-border: 0 0 0 1px rgba(255, 255, 255, 0.08);
+    --shadow-border-hover: 0 0 0 1px rgba(255, 255, 255, 0.14), 0 18px 40px -28px rgba(0, 0, 0, 0.8);
+    --ease-out: cubic-bezier(0.2, 0, 0, 1);
   }
 
   * { box-sizing: border-box; }
 
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: geometricPrecision;
+  }
+
   body {
     background: var(--bg);
     color: var(--text);
-    font-family: 'Inter', system-ui, sans-serif;
-    -webkit-font-smoothing: antialiased;
+    font-family: 'Geist', 'Satoshi', 'Outfit', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-synthesis: none;
+  }
+
+  h1, h2, h3 {
+    text-wrap: balance;
+    letter-spacing: -0.025em;
+  }
+
+  p, li {
+    text-wrap: pretty;
+  }
+
+  button {
+    transition-property: transform, background-color, border-color, color, box-shadow, opacity;
+    transition-duration: 160ms;
+    transition-timing-function: var(--ease-out);
+  }
+
+  button:active:not(:disabled) {
+    transform: scale(0.96);
+  }
+
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 70%, white);
+    outline-offset: 2px;
+  }
+
+  img {
+    outline: 1px solid rgba(255, 255, 255, 0.1);
+    outline-offset: -1px;
   }
 
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 38%, transparent);
+  }
+}
+
+@layer utilities {
+  .engram-card {
+    box-shadow: var(--shadow-border);
+    transition-property: box-shadow, transform, background-color;
+    transition-duration: 180ms;
+    transition-timing-function: var(--ease-out);
+  }
+
+  .engram-card-hover:hover {
+    box-shadow: var(--shadow-border-hover);
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--surface) 0%,
+      color-mix(in srgb, var(--surface-2) 78%, white) 45%,
+      var(--surface) 100%
+    );
+    background-size: 220% 100%;
+    animation: shimmer 1.2s var(--ease-out) infinite;
+  }
+
+  @keyframes shimmer {
+    from { background-position: 120% 0; }
+    to { background-position: -120% 0; }
+  }
 }

@@ -1,6 +1,6 @@
 type LogCategory =
   | 'nav' | 'search' | 'ask' | 'capture' | 'timeline'
-  | 'settings' | 'auth' | 'activity' | 'insights'
+  | 'settings' | 'auth' | 'activity' | 'insights' | 'learning'
   | 'detail' | 'filter' | 'api' | 'error'
 
 interface LogEvent {

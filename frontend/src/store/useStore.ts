@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { CaptureResult, SearchFilters, StatusResponse } from '../api/client'
 
-type View = 'search' | 'timeline' | 'chat' | 'activity' | 'insights' | 'settings'
+type View = 'search' | 'timeline' | 'chat' | 'activity' | 'insights' | 'learning' | 'settings'
 
 export interface ChatMessage {
   id: string

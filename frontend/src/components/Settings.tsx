@@ -5,7 +5,7 @@ import { sessionLogger } from '../utils/sessionLogger'
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border p-5" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+    <div className="engram-card rounded-[1.35rem] p-5" style={{ background: 'var(--surface)' }}>
       <h3 className="mb-4 font-semibold" style={{ color: 'var(--text)' }}>{title}</h3>
       <div className="space-y-4">{children}</div>
     </div>
@@ -106,7 +106,7 @@ export function SettingsPanel() {
             ].map(({ label, value }) => (
               <div key={label} className="rounded-xl p-3" style={{ background: 'var(--surface-2)' }}>
                 <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{label}</p>
-                <p className="text-sm font-semibold mt-0.5" style={{ color: 'var(--text)' }}>{value}</p>
+                <p className="text-sm font-semibold mt-0.5 tabular" style={{ color: 'var(--text)' }}>{value}</p>
               </div>
             ))}
           </div>
@@ -115,8 +115,8 @@ export function SettingsPanel() {
 
       {/* Capture settings */}
       <Section title="Capture">
-        <Field label="Screenshot interval" description="How often to capture the screen">
-          <NumberInput value={Number(getCapture().screenshot_interval_seconds ?? 30)} onChange={v => patchCapture('screenshot_interval_seconds', v)} min={5} max={300} unit="sec" />
+        <Field label="Idle screenshot interval" description="Adaptive capture uses a 2s tick while active, then falls back to this interval when idle">
+          <NumberInput value={Number(getCapture().screenshot_interval_seconds ?? 30)} onChange={v => patchCapture('screenshot_interval_seconds', v)} min={2} max={300} unit="sec" />
         </Field>
         <Field label="Clipboard poll interval" description="How often to check the clipboard">
           <NumberInput value={Number(getCapture().clipboard_poll_seconds ?? 2)} onChange={v => patchCapture('clipboard_poll_seconds', v)} min={1} max={60} unit="sec" />
